@@ -48,10 +48,21 @@ class HybridGNSJEPA(nn.Module):
         )
 
     def forward(
-        self, context_graph: Data | Batch, future_graph: Data | Batch, horizon: Tensor | None = None
+        self,
+        context_graph: Data | Batch,
+        future_graph: Data | Batch | None = None,
+        horizon: Tensor | None = None,
     ) -> dict[str, Tensor]:
-        node_latents, context_latent = self.encoder(context_graph)
+        node_latents, context_latent = self.encoder(context_graph, pool=future_graph is not None)
         acceleration = self.dynamics_head(node_latents)
+        if future_graph is None:
+            return {
+                "acceleration": acceleration,
+                "context": context_latent
+                if context_latent is not None
+                else node_latents.mean(dim=0, keepdim=True),
+                "node_context": node_latents,
+            }
         target_node_latents, target_latent = self.target_encoder(future_graph)
         horizon = _resolve_horizon(
             context_graph, context_latent.size(0), context_latent.device, horizon
