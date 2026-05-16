@@ -1,30 +1,35 @@
 project:
   name: particle-jepa
-  run_name: lts_particle_jepa_debug
+  run_name: waterramps_particle_jepa_probe
   seed: 42
 
 data:
   dataset: learning_to_simulate
-  data_root: data/raw/WaterDropSample
+  data_root: data/raw/WaterRamps
   split: train
   horizon: 1
   graph_radius: null
   max_neighbors: null
-  max_trajectories: 2
-  sample_stride: 4
-  max_samples_per_trajectory: 128
+  max_trajectories: 32
+  sample_stride: 1
+  max_samples_per_trajectory: 256
   normalize_acceleration: true
   kinematic_particle_id: 3
+  input_sequence_length: 6
+  num_particle_types: 9
+  noise_std: 0.00067
+  apply_noise: true
+  use_official_features: true
   batch_size: 2
   num_workers: 0
 
 model:
   type: particle_jepa
-  node_input_dim: 7
-  edge_input_dim: 6
+  node_input_dim: 23
+  edge_input_dim: 3
   hidden_dim: 128
   latent_dim: 128
-  message_passing_steps: 5
+  message_passing_steps: 10
   mlp_layers: 2
   pooling: mean
   normalize_latents: true
@@ -41,11 +46,11 @@ loss:
 
 optimizer:
   name: adamw
-  lr: 0.0003
+  lr: 0.0001
   weight_decay: 0.0001
 
 training:
-  epochs: 3
+  epochs: 25
   grad_clip_norm: 1.0
   checkpoint_every: 1
   visualize_every: 1
@@ -62,7 +67,7 @@ tracking:
   entity: null
   tags:
     - lts
-    - waterdrop
+    - waterramps
     - particle-jepa
   mode: online
 

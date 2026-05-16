@@ -51,6 +51,11 @@ class LearningToSimulateConfig:
     max_samples_per_trajectory: int | None = 128
     normalize_acceleration: bool = True
     kinematic_particle_id: int = 3
+    input_sequence_length: int = 6
+    num_particle_types: int = 9
+    noise_std: float = 0.0
+    apply_noise: bool = True
+    use_official_features: bool = True
 
 
 class LearningToSimulateDataset(Dataset):
@@ -95,28 +100,26 @@ class LearningToSimulateDataset(Dataset):
         future_idx = time_idx + self.config.future_offset
 
         particle_type = trajectory["particle_types"]
-        context = self.graph_builder.build(
-            trajectory["positions"][time_idx],
-            trajectory["velocities"][time_idx],
-            particle_type=particle_type,
-            boundary=self._boundary_flags(trajectory["positions"][time_idx]),
-        )
-        future = self.graph_builder.build(
-            trajectory["positions"][future_idx],
-            trajectory["velocities"][future_idx],
-            particle_type=particle_type,
-            boundary=self._boundary_flags(trajectory["positions"][future_idx]),
+        position_sequence = self._position_sequence(trajectory, time_idx)
+        position_noise = self._sample_position_noise(position_sequence, particle_type)
+        noisy_position_sequence = position_sequence + position_noise
+        context = self.build_graph_from_position_sequence(noisy_position_sequence, particle_type)
+        future = self.build_graph_from_position_sequence(
+            self._position_sequence(trajectory, future_idx), particle_type
         )
 
         next_idx = min(time_idx + 1, trajectory["positions"].size(0) - 1)
         next_position = trajectory["positions"][next_idx]
-        next_velocity = trajectory["velocities"][next_idx]
-        raw_acceleration = next_velocity - context.velocity
+        next_position_adjusted = next_position + position_noise[-1]
+        previous_position = noisy_position_sequence[-1]
+        previous_velocity = noisy_position_sequence[-1] - noisy_position_sequence[-2]
+        next_velocity = next_position_adjusted - previous_position
+        raw_acceleration = next_velocity - previous_velocity
         acceleration = self._normalize_acceleration(raw_acceleration)
         dynamic_mask = particle_type != self.config.kinematic_particle_id
 
         context.y_pos = next_position
-        context.y_velocity = next_velocity
+        context.y_velocity = trajectory["velocities"][next_idx]
         context.y_acceleration_raw = raw_acceleration
         context.y_acceleration = acceleration
         context.dynamic_mask = dynamic_mask.float()
@@ -128,12 +131,45 @@ class LearningToSimulateDataset(Dataset):
             future.step_context = trajectory["step_context"][future_idx]
         return context, future
 
+    def build_graph_from_position_sequence(self, position_sequence: Tensor, particle_type: Tensor):
+        """Build the LTS graph for an input position window."""
+        positions = position_sequence[-1]
+        velocities = position_sequence[-1] - position_sequence[-2]
+        if not self.config.use_official_features:
+            return self.graph_builder.build(
+                positions,
+                velocities,
+                particle_type=particle_type,
+                boundary=self._boundary_flags(positions),
+            )
+
+        edge_index, edge_attr = self._official_edge_features(positions)
+        velocity_features = self._normalized_velocity_history(position_sequence)
+        boundary_features = self._normalized_boundary_distances(positions)
+        type_features = torch.nn.functional.one_hot(
+            particle_type.clamp_min(0).clamp_max(self.config.num_particle_types - 1),
+            num_classes=self.config.num_particle_types,
+        ).float()
+        x = torch.cat([velocity_features, boundary_features, type_features], dim=-1)
+        from torch_geometric.data import Data
+
+        return Data(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            pos=positions.float(),
+            velocity=velocities.float(),
+            particle_type=particle_type[:, None].float(),
+            boundary=self._boundary_flags(positions)[:, None],
+        )
+
     def _build_indices(self) -> list[tuple[int, int]]:
         indices: list[tuple[int, int]] = []
         stride = max(int(self.config.sample_stride), 1)
         for traj_idx, trajectory in enumerate(self.trajectories):
+            start_t = max(int(self.config.input_sequence_length) - 1, 1)
             max_t = trajectory["positions"].size(0) - self.config.future_offset
-            time_indices = list(range(0, max_t, stride))
+            time_indices = list(range(start_t, max_t, stride))
             if self.config.max_samples_per_trajectory is not None:
                 time_indices = time_indices[: self.config.max_samples_per_trajectory]
             indices.extend((traj_idx, time_idx) for time_idx in time_indices)
@@ -154,8 +190,69 @@ class LearningToSimulateDataset(Dataset):
         if not self.config.normalize_acceleration:
             return acceleration
         mean = torch.tensor(self.metadata["acc_mean"], dtype=acceleration.dtype)
-        std = torch.tensor(self.metadata["acc_std"], dtype=acceleration.dtype).clamp_min(1e-8)
+        std = self._combined_std("acc_std", acceleration.dtype)
         return (acceleration - mean) / std
+
+    def _normalized_velocity_history(self, position_sequence: Tensor) -> Tensor:
+        velocity_sequence = position_sequence[1:] - position_sequence[:-1]
+        mean = torch.tensor(self.metadata["vel_mean"], dtype=velocity_sequence.dtype)
+        std = self._combined_std("vel_std", velocity_sequence.dtype)
+        normalized = (velocity_sequence - mean) / std
+        return normalized.permute(1, 0, 2).reshape(position_sequence.size(1), -1)
+
+    def _normalized_boundary_distances(self, positions: Tensor) -> Tensor:
+        bounds = self.metadata.get("bounds")
+        if bounds is None:
+            return torch.zeros((positions.size(0), positions.size(1) * 2), dtype=positions.dtype)
+        bounds_tensor = torch.tensor(bounds, dtype=positions.dtype, device=positions.device)
+        lower = positions - bounds_tensor[:, 0]
+        upper = bounds_tensor[:, 1] - positions
+        return torch.cat([lower, upper], dim=-1).div(self.radius).clamp(-1.0, 1.0)
+
+    def _official_edge_features(self, positions: Tensor) -> tuple[Tensor, Tensor]:
+        displacement = positions[:, None, :] - positions[None, :, :]
+        distance = torch.linalg.norm(displacement, dim=-1)
+        adjacency = (distance <= self.radius) & (distance > 0)
+        edge_index = adjacency.nonzero(as_tuple=False).t().contiguous()
+        if self.config.max_neighbors is not None and edge_index.numel() > 0:
+            edge_index = self.graph_builder._limit_neighbors(
+                edge_index, distance, positions.size(0)
+            )
+        if edge_index.numel() == 0:
+            edge_attr = torch.empty(
+                (0, positions.size(1) + 1), dtype=positions.dtype, device=positions.device
+            )
+            return edge_index, edge_attr
+        senders, receivers = edge_index
+        rel_disp = (positions[senders] - positions[receivers]) / self.radius
+        rel_dist = torch.linalg.norm(rel_disp, dim=-1, keepdim=True)
+        return edge_index, torch.cat([rel_disp, rel_dist], dim=-1)
+
+    def _position_sequence(self, trajectory: dict[str, Tensor | dict], time_idx: int) -> Tensor:
+        length = int(self.config.input_sequence_length)
+        return trajectory["positions"][time_idx - length + 1 : time_idx + 1]
+
+    def _sample_position_noise(self, position_sequence: Tensor, particle_type: Tensor) -> Tensor:
+        noise_std = float(self.config.noise_std)
+        if noise_std <= 0.0 or not self.config.apply_noise:
+            return torch.zeros_like(position_sequence)
+        num_velocities = position_sequence.size(0) - 1
+        velocity_noise = torch.randn_like(position_sequence[1:]) * (
+            noise_std / max(num_velocities, 1) ** 0.5
+        )
+        velocity_noise = torch.cumsum(velocity_noise, dim=0)
+        position_noise = torch.cat(
+            [torch.zeros_like(velocity_noise[:1]), torch.cumsum(velocity_noise, dim=0)], dim=0
+        )
+        dynamic_mask = (particle_type != self.config.kinematic_particle_id).float()
+        return position_noise * dynamic_mask[None, :, None]
+
+    def _combined_std(self, metadata_key: str, dtype: torch.dtype) -> Tensor:
+        std = torch.tensor(self.metadata[metadata_key], dtype=dtype)
+        noise_std = float(self.config.noise_std)
+        if noise_std > 0.0:
+            std = torch.sqrt(std.pow(2) + noise_std**2)
+        return std.clamp_min(1e-8)
 
 
 def load_metadata(root: str | Path) -> dict:

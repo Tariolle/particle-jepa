@@ -19,6 +19,8 @@ def test_lts_dataset_decodes_sequence_example(tmp_path) -> None:
         "default_connectivity_radius": 0.4,
         "dim": 2,
         "dt": 0.1,
+        "vel_mean": [0.0, 0.0],
+        "vel_std": [1.0, 1.0],
         "acc_mean": [0.0, 0.0],
         "acc_std": [1.0, 1.0],
     }
@@ -32,14 +34,15 @@ def test_lts_dataset_decodes_sequence_example(tmp_path) -> None:
             future_offset=1,
             sample_stride=1,
             max_samples_per_trajectory=None,
+            input_sequence_length=2,
         )
     )
     context, future = dataset[0]
 
-    assert len(dataset) == 3
-    assert context.x.shape == (4, 7)
-    assert future.x.shape == (4, 7)
-    assert context.edge_attr.shape[1] == 6
+    assert len(dataset) == 2
+    assert context.x.shape == (4, 15)
+    assert future.x.shape == (4, 15)
+    assert context.edge_attr.shape[1] == 3
     assert context.y_acceleration.shape == (4, 2)
     assert context.dynamic_mask.shape == (4,)
     assert context.horizon.item() == 1

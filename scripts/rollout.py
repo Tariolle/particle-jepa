@@ -12,8 +12,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from particle_jepa.data.graph_builder import ParticleGraphBuilder
 from particle_jepa.data.lts_dataset import LearningToSimulateConfig, LearningToSimulateDataset
+from particle_jepa.data.graph_builder import ParticleGraphBuilder
 from particle_jepa.data.toy_dataset import ToyParticleConfig, generate_toy_rollouts
 from particle_jepa.evaluation.rollout_eval import rollout_error, rollout_step
 from particle_jepa.models import GraphNetworkSimulator, HybridGNSJEPA
@@ -114,35 +114,40 @@ def _rollout_lts(model, data_cfg: dict, config: dict, device: torch.device, step
         max_trajectories=1,
         sample_stride=1,
         max_samples_per_trajectory=1,
+        normalize_acceleration=bool(data_cfg.get("normalize_acceleration", True)),
+        kinematic_particle_id=int(data_cfg.get("kinematic_particle_id", 3)),
+        input_sequence_length=int(data_cfg.get("input_sequence_length", 6)),
+        num_particle_types=int(data_cfg.get("num_particle_types", 9)),
+        noise_std=float(data_cfg.get("noise_std", 0.0)),
+        apply_noise=False,
+        use_official_features=bool(data_cfg.get("use_official_features", True)),
     )
     dataset = LearningToSimulateDataset(lts_config)
     trajectory = dataset.trajectories[0]
-    start = min(max(start, 0), trajectory["positions"].size(0) - steps - 1)
+    history = int(lts_config.input_sequence_length)
+    start = min(max(start, history - 1), trajectory["positions"].size(0) - steps - 1)
     gt_positions = trajectory["positions"][start : start + steps + 1]
     gt_velocities = trajectory["velocities"][start : start + steps + 1]
-    velocities = gt_velocities[0].to(device)
-    positions = gt_positions[0].to(device)
+    current_sequence = trajectory["positions"][start - history + 1 : start + 1].to(device)
+    positions = current_sequence[-1]
     particle_types = trajectory["particle_types"].to(device)
     kinematic_id = int(data_cfg.get("kinematic_particle_id", 3))
     kinematic_mask = particle_types == kinematic_id
-    graph_builder = ParticleGraphBuilder(
-        radius=dataset.radius, max_neighbors=lts_config.max_neighbors
-    )
     predicted = [positions.detach().cpu()]
     bounds = dataset.metadata.get("bounds")
 
     with torch.no_grad():
         for _ in range(steps):
-            boundary = dataset._boundary_flags(positions)
-            graph = graph_builder.build(
-                positions, velocities, particle_type=particle_types, boundary=boundary
+            graph = dataset.build_graph_from_position_sequence(
+                current_sequence.detach().cpu(), trajectory["particle_types"]
             ).to(device)
             with autocast_context(device, config):
                 outputs = model(graph)
                 acceleration = outputs["acceleration"] if isinstance(outputs, dict) else outputs
             acceleration = _denormalize_lts_acceleration(acceleration.float(), dataset, data_cfg)
+            velocities = current_sequence[-1] - current_sequence[-2]
             positions, velocities = rollout_step(
-                positions.float(), velocities.float(), acceleration.float(), 1.0
+                current_sequence[-1].float(), velocities.float(), acceleration.float(), 1.0
             )
             if torch.any(kinematic_mask):
                 positions = torch.where(
@@ -155,6 +160,7 @@ def _rollout_lts(model, data_cfg: dict, config: dict, device: torch.device, step
                 bounds_tensor = torch.tensor(bounds, dtype=positions.dtype, device=positions.device)
                 positions = torch.maximum(positions, bounds_tensor[:, 0])
                 positions = torch.minimum(positions, bounds_tensor[:, 1])
+            current_sequence = torch.cat([current_sequence[1:], positions[None]], dim=0)
             predicted.append(positions.detach().cpu())
 
     return gt_positions.cpu(), torch.stack(predicted), bounds
@@ -169,6 +175,9 @@ def _denormalize_lts_acceleration(acceleration, dataset, data_cfg: dict):
     std = torch.tensor(
         dataset.metadata["acc_std"], dtype=acceleration.dtype, device=acceleration.device
     ).clamp_min(1e-8)
+    noise_std = float(data_cfg.get("noise_std", 0.0))
+    if noise_std > 0.0:
+        std = torch.sqrt(std.pow(2) + noise_std**2)
     return acceleration * std + mean
 
 

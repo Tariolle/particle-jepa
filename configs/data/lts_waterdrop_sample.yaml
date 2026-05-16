@@ -9,5 +9,10 @@ sample_stride: 4
 max_samples_per_trajectory: 128
 normalize_acceleration: true
 kinematic_particle_id: 3
+input_sequence_length: 6
+num_particle_types: 9
+noise_std: 0.00067
+apply_noise: true
+use_official_features: true
 batch_size: 2
 num_workers: 0

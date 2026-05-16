@@ -158,6 +158,7 @@ def _build_retrieval_model(config: dict):
 
 def _small_data_config(data_config: dict, max_samples: int) -> dict:
     config = dict(data_config)
+    config["apply_noise"] = False
     sequence_length = int(config.get("trajectory_length", config.get("sequence_length", 100)))
     horizon = int(config.get("horizon", config.get("future_offset", 5)))
     samples_per_trajectory = max(sequence_length - horizon, 1)
