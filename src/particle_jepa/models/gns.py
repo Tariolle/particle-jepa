@@ -32,5 +32,5 @@ class GraphNetworkSimulator(nn.Module):
         self.decoder = AccelerationDecoder(hidden_dim, hidden_dim, mlp_layers=mlp_layers)
 
     def forward(self, graph: Data | Batch) -> Tensor:
-        node_latents, _ = self.encoder(graph)
+        node_latents, _ = self.encoder(graph, pool=False)
         return self.decoder(node_latents)

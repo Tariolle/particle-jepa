@@ -25,11 +25,13 @@ class ParticleGraphEncoder(nn.Module):
         self.processor = GraphProcessor(hidden_dim, message_passing_steps, dropout, mlp_layers)
         self.projection = nn.Linear(hidden_dim, latent_dim)
 
-    def forward(self, graph: Data | Batch) -> tuple[Tensor, Tensor]:
+    def forward(self, graph: Data | Batch, pool: bool = True) -> tuple[Tensor, Tensor | None]:
         x = self.node_encoder(graph.x)
         edge_attr = self.edge_encoder(graph.edge_attr)
         x, _ = self.processor(x, graph.edge_index, edge_attr)
         node_latents = self.projection(x)
+        if not pool:
+            return node_latents, None
         batch = getattr(graph, "batch", None)
         if batch is None:
             batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)

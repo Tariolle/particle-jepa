@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from particle_jepa.models import ParticleJEPA
 from particle_jepa.training.losses import jepa_loss
+from particle_jepa.utils.perf import autocast_context, compile_model, make_grad_scaler
 from particle_jepa.utils.runs import append_jsonl
 
 
@@ -24,6 +25,7 @@ def train_jepa(
         mlp_layers=model_cfg.get("mlp_layers", 2),
         max_horizon=model_cfg.get("max_horizon", 32),
     ).to(device)
+    model = compile_model(model, config)
     loader = DataLoader(dataset, batch_size=train_cfg["batch_size"], shuffle=True)
     val_loader = (
         DataLoader(val_dataset, batch_size=train_cfg["batch_size"], shuffle=False)
@@ -35,6 +37,7 @@ def train_jepa(
         lr=train_cfg["learning_rate"],
         weight_decay=train_cfg.get("weight_decay", 0.0),
     )
+    scaler = make_grad_scaler(device, config)
 
     for epoch in range(train_cfg["epochs"]):
         model.train()
@@ -43,11 +46,14 @@ def train_jepa(
             context = context.to(device)
             future = future.to(device)
             optimizer.zero_grad(set_to_none=True)
-            outputs = model(context, future)
-            loss = jepa_loss(outputs["prediction"], outputs["target"])
-            loss.backward()
+            with autocast_context(device, config):
+                outputs = model(context, future)
+                loss = jepa_loss(outputs["prediction"], outputs["target"])
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             running += loss.item()
         train_loss = running / max(len(loader), 1)
         val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
@@ -67,6 +73,7 @@ def _evaluate(model: ParticleJEPA, loader, device: torch.device) -> float:
         for context, future in loader:
             context = context.to(device)
             future = future.to(device)
-            outputs = model(context, future)
-            running += jepa_loss(outputs["prediction"], outputs["target"]).item()
+            with autocast_context(device, {"train": {"precision": "fp16"}}):
+                outputs = model(context, future)
+                running += jepa_loss(outputs["prediction"], outputs["target"]).item()
     return running / max(len(loader), 1)

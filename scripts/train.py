@@ -22,6 +22,7 @@ from particle_jepa.training.train_hybrid import train_hybrid
 from particle_jepa.training.train_jepa import train_jepa
 from particle_jepa.utils.checkpointing import save_checkpoint
 from particle_jepa.utils.config import load_config, normalize_experiment_config
+from particle_jepa.utils.perf import unwrap_compiled_model
 from particle_jepa.utils.runs import copy_config, create_run_dir
 from particle_jepa.utils.seed import seed_everything
 from particle_jepa.utils.tracking import init_tracker
@@ -116,7 +117,9 @@ def run_training(
     checkpoint_path = checkpoint
     if checkpoint_path is None:
         checkpoint_path = run_dir / "checkpoints" / "last.pt"
-    save_checkpoint({"model": model.state_dict(), "config": config}, checkpoint_path)
+    save_checkpoint(
+        {"model": unwrap_compiled_model(model).state_dict(), "config": config}, checkpoint_path
+    )
     metrics_path = run_dir / "metrics.json"
     metrics_path.write_text(
         json.dumps({"checkpoint": str(checkpoint_path)}, indent=2), encoding="utf-8"

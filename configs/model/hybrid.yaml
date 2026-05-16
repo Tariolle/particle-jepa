@@ -44,6 +44,10 @@ training:
   checkpoint_every: 5
   visualize_every: 5
   device: auto
+  precision: fp16
+  compile: true
+  compile_mode: reduce-overhead
+  compile_fullgraph: false
 
 tracking:
   provider: wandb

@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from particle_jepa.models import GraphNetworkSimulator
 from particle_jepa.training.losses import acceleration_loss
+from particle_jepa.utils.perf import autocast_context, compile_model, make_grad_scaler
 from particle_jepa.utils.runs import append_jsonl
 
 
@@ -22,6 +23,7 @@ def train_gns(
         dropout=model_cfg.get("dropout", 0.0),
         mlp_layers=model_cfg.get("mlp_layers", 2),
     ).to(device)
+    model = compile_model(model, config)
     loader = DataLoader(dataset, batch_size=train_cfg["batch_size"], shuffle=True)
     val_loader = (
         DataLoader(val_dataset, batch_size=train_cfg["batch_size"], shuffle=False)
@@ -33,6 +35,7 @@ def train_gns(
         lr=train_cfg["learning_rate"],
         weight_decay=train_cfg.get("weight_decay", 0.0),
     )
+    scaler = make_grad_scaler(device, config)
 
     for epoch in range(train_cfg["epochs"]):
         model.train()
@@ -40,11 +43,14 @@ def train_gns(
         for context, _future in tqdm(loader, desc=f"gns epoch {epoch + 1}", leave=False):
             context = context.to(device)
             optimizer.zero_grad(set_to_none=True)
-            prediction = model(context)
-            loss = acceleration_loss(prediction, context.y_acceleration)
-            loss.backward()
+            with autocast_context(device, config):
+                prediction = model(context)
+                loss = acceleration_loss(prediction, context.y_acceleration)
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             running += loss.item()
         train_loss = running / max(len(loader), 1)
         val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
@@ -63,5 +69,6 @@ def _evaluate(model: GraphNetworkSimulator, loader, device: torch.device) -> flo
     with torch.no_grad():
         for context, _future in loader:
             context = context.to(device)
-            running += acceleration_loss(model(context), context.y_acceleration).item()
+            with autocast_context(device, {"train": {"precision": "fp16"}}):
+                running += acceleration_loss(model(context), context.y_acceleration).item()
     return running / max(len(loader), 1)

@@ -66,3 +66,41 @@ def animate_rollout_comparison(
         output.parent.mkdir(parents=True, exist_ok=True)
         animation.save(output)
     return animation
+
+
+def save_rollout_frame_strip(
+    ground_truth: Tensor,
+    predicted: Tensor,
+    output: str | Path,
+    max_frames: int = 8,
+):
+    """Save a static strip comparing rollout frames."""
+    ground_truth = torch.as_tensor(ground_truth).detach().cpu()
+    predicted = torch.as_tensor(predicted).detach().cpu()
+    frames = min(ground_truth.size(0), predicted.size(0), max_frames)
+    frame_ids = torch.linspace(0, min(ground_truth.size(0), predicted.size(0)) - 1, frames).long()
+    fig, axes = plt.subplots(2, frames, figsize=(2.4 * frames, 4.8), sharex=True, sharey=True)
+    if frames == 1:
+        axes = axes.reshape(2, 1)
+    for col, frame_id in enumerate(frame_ids.tolist()):
+        for row, (rollout, label) in enumerate(
+            [(ground_truth, "ground truth"), (predicted, "predicted")]
+        ):
+            ax = axes[row, col]
+            frame = rollout[frame_id]
+            ax.scatter(frame[:, 0], frame[:, 1], s=14, c=frame[:, 0], cmap="viridis")
+            ax.set_xlim(-0.05, 1.05)
+            ax.set_ylim(-0.05, 1.05)
+            ax.set_aspect("equal")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if row == 0:
+                ax.set_title(f"t={frame_id}")
+            if col == 0:
+                ax.set_ylabel(label)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+    return output

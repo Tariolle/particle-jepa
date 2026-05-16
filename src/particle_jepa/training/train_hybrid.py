@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from particle_jepa.models import HybridGNSJEPA
 from particle_jepa.training.losses import HybridLoss
+from particle_jepa.utils.perf import autocast_context, compile_model, make_grad_scaler
 from particle_jepa.utils.runs import append_jsonl
 
 
@@ -24,6 +25,7 @@ def train_hybrid(
         mlp_layers=model_cfg.get("mlp_layers", 2),
         max_horizon=model_cfg.get("max_horizon", 32),
     ).to(device)
+    model = compile_model(model, config)
     loader = DataLoader(dataset, batch_size=train_cfg["batch_size"], shuffle=True)
     val_loader = (
         DataLoader(val_dataset, batch_size=train_cfg["batch_size"], shuffle=False)
@@ -39,6 +41,7 @@ def train_hybrid(
         dynamics_weight=train_cfg.get("dynamics_loss_weight", 1.0),
         jepa_weight=train_cfg.get("jepa_loss_weight", 0.2),
     )
+    scaler = make_grad_scaler(device, config)
 
     for epoch in range(train_cfg["epochs"]):
         model.train()
@@ -47,11 +50,14 @@ def train_hybrid(
             context = context.to(device)
             future = future.to(device)
             optimizer.zero_grad(set_to_none=True)
-            outputs = model(context, future)
-            losses = criterion(outputs, context)
-            losses["loss"].backward()
+            with autocast_context(device, config):
+                outputs = model(context, future)
+                losses = criterion(outputs, context)
+            scaler.scale(losses["loss"]).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             running += losses["loss"].item()
         train_loss = running / max(len(loader), 1)
         val_loss = (
@@ -73,5 +79,6 @@ def _evaluate(model: HybridGNSJEPA, loader, criterion: HybridLoss, device: torch
         for context, future in loader:
             context = context.to(device)
             future = future.to(device)
-            running += criterion(model(context, future), context)["loss"].item()
+            with autocast_context(device, {"train": {"precision": "fp16"}}):
+                running += criterion(model(context, future), context)["loss"].item()
     return running / max(len(loader), 1)
