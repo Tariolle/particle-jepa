@@ -39,6 +39,8 @@ Future graph ─→ GNN target encoder ───→ target future embedding
 
 - Toy particle dataset with simple spring-like dynamics for smoke tests and demos.
 - Dynamic radius graph construction with PyTorch Geometric `Data` objects.
+- Hydra experiment configuration.
+- Weights & Biases experiment tracking.
 - GNS-style message-passing simulator baseline.
 - Particle-JEPA encoder and latent predictor.
 - Hybrid model that combines acceleration prediction with latent future prediction.
@@ -75,19 +77,32 @@ pytest
 Train the JEPA toy model:
 
 ```bash
-python scripts/train.py --config configs/model/particle_jepa.yaml
+python scripts/train.py
 ```
 
 Train the baseline GNS-style model:
 
 ```bash
-python scripts/train.py --config configs/model/gns.yaml
+python scripts/train.py --config-name model/gns
 ```
 
 Train the hybrid model:
 
 ```bash
-python scripts/train.py --config configs/model/hybrid.yaml
+python scripts/train.py --config-name model/hybrid
+```
+
+Use Hydra overrides:
+
+```bash
+python scripts/train.py data.num_particles=128 data.horizon=8 training.epochs=20
+```
+
+Enable Weights & Biases tracking:
+
+```bash
+wandb login
+python scripts/train.py tracking.enabled=true
 ```
 
 Create a toy rollout visualization:

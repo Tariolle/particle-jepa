@@ -10,7 +10,7 @@ from particle_jepa.utils.runs import append_jsonl
 
 
 def train_jepa(
-    dataset, config: dict, device: torch.device, val_dataset=None, run_dir=None
+    dataset, config: dict, device: torch.device, val_dataset=None, run_dir=None, tracker=None
 ) -> ParticleJEPA:
     model_cfg = config["model"]
     train_cfg = config["train"]
@@ -54,6 +54,8 @@ def train_jepa(
         row = {"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss}
         if run_dir is not None:
             append_jsonl(run_dir / "logs.jsonl", row)
+        if tracker is not None:
+            tracker.log(row, step=epoch + 1)
         print(f"epoch={epoch + 1} loss={train_loss:.6f} val_loss={val_loss}")
     return model
 

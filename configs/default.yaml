@@ -31,3 +31,17 @@ train:
 paths:
   output_dir: outputs
   checkpoint_dir: checkpoints
+  run_root: runs
+
+tracking:
+  provider: wandb
+  enabled: false
+  project: particle-jepa
+  entity: null
+  tags:
+    - toy
+  mode: online
+
+hydra:
+  job:
+    chdir: false

@@ -44,3 +44,20 @@ training:
   checkpoint_every: 5
   visualize_every: 5
   device: auto
+
+tracking:
+  provider: wandb
+  enabled: false
+  project: particle-jepa
+  entity: null
+  tags:
+    - toy
+    - hybrid
+  mode: online
+
+paths:
+  run_root: runs
+
+hydra:
+  job:
+    chdir: false

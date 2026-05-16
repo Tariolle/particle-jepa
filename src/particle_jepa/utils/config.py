@@ -60,8 +60,10 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "jepa_loss_weight": loss.get("jepa_loss_weight", 0.2),
             },
             "paths": config.get("paths", {"run_root": "runs"}),
+            "tracking": config.get("tracking", {"provider": "wandb", "enabled": False}),
             "raw_config": config,
         }
     normalized = dict(config)
     normalized.setdefault("experiment", "particle_jepa")
+    normalized.setdefault("tracking", {"provider": "wandb", "enabled": False})
     return normalized
