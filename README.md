@@ -66,6 +66,7 @@ The intended comparison set is:
 - FP16 autocast on CUDA.
 - `torch.compile(..., mode="reduce-overhead")` support.
 - Rollout strip visualization.
+- DeepMind Learning-to-Simulate TFRecord loader without a TensorFlow dependency.
 - Latent future retrieval visualization with chance and random baselines.
 
 ## Installation
@@ -135,6 +136,26 @@ Export a Particle-JEPA retrieval panel:
 python scripts/retrieve.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --top-k 5
 ```
 
+Download a DeepMind Learning-to-Simulate sample:
+
+```bash
+python scripts/download_data.py --dataset WaterDropSample --splits metadata train valid
+```
+
+Train on the official LTS sample:
+
+```bash
+python scripts/train.py --config-name lts_particle_jepa
+python scripts/train.py --config-name lts_gns
+python scripts/train.py --config-name lts_hybrid
+```
+
+Export a real LTS rollout GIF from a GNS or hybrid checkpoint:
+
+```bash
+python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 64 --output runs/<run>_gns/visualizations/lts_rollout.gif
+```
+
 Training writes run artifacts to:
 
 ```text
@@ -165,16 +186,18 @@ GNS and hybrid models are evaluated with:
 - rollout visual comparison,
 - rollout Chamfer distance.
 
-## Dataset Roadmap
+## Learning-to-Simulate
 
-The repository currently uses a toy particle simulator. DeepMind Learning-to-Simulate integration is intentionally left as the next dataset milestone.
+The project supports the official DeepMind Learning-to-Simulate release. Start with `WaterDropSample`, then scale to visually richer 2D datasets such as `WaterRamps`, `SandRamps`, `Goop`, and `MultiMaterial`. The 3D datasets are supported at the loader level but need dedicated 3D visualization work.
 
-Planned dataset work:
+Current LTS support:
 
-- TFRecord or exported-array conversion.
-- Dataset-specific normalization.
-- Material and boundary metadata parsing.
-- Multi-material rollout evaluation.
+- TFRecord parsing through protobuf.
+- Official metadata radius and bounds.
+- Finite-difference velocities from particle positions.
+- GNS/Hybrid rollout from real decoded trajectories.
+
+See [docs/learning_to_simulate.md](docs/learning_to_simulate.md).
 
 ## References
 

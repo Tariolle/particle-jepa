@@ -1,0 +1,11 @@
+dataset: learning_to_simulate
+data_root: data/raw/WaterDropSample
+split: train
+horizon: 1
+graph_radius: null
+max_neighbors: null
+max_trajectories: 2
+sample_stride: 4
+max_samples_per_trajectory: 128
+batch_size: 2
+num_workers: 0

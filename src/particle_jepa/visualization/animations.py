@@ -8,12 +8,16 @@ from matplotlib.animation import FuncAnimation
 from torch import Tensor
 
 
-def animate_rollout(positions: Tensor, output: str | Path | None = None, interval: int = 80):
+def animate_rollout(
+    positions: Tensor,
+    output: str | Path | None = None,
+    interval: int = 80,
+    bounds: list[list[float]] | None = None,
+):
     positions = torch.as_tensor(positions).detach().cpu()
     fig, ax = plt.subplots(figsize=(5, 5))
     scatter = ax.scatter([], [], s=25)
-    ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
+    _set_axes_bounds(ax, bounds)
     ax.set_aspect("equal")
 
     def update(frame: int):
@@ -34,6 +38,7 @@ def animate_rollout_comparison(
     predicted: Tensor,
     output: str | Path | None = None,
     interval: int = 80,
+    bounds: list[list[float]] | None = None,
 ):
     """Animate ground-truth and predicted rollouts side by side with an overlay panel."""
     ground_truth = torch.as_tensor(ground_truth).detach().cpu()
@@ -43,8 +48,7 @@ def animate_rollout_comparison(
     scatters = []
     for ax, title in zip(axes, ["ground truth", "predicted", "overlay"], strict=True):
         ax.set_title(title)
-        ax.set_xlim(-0.05, 1.05)
-        ax.set_ylim(-0.05, 1.05)
+        _set_axes_bounds(ax, bounds)
         ax.set_aspect("equal")
     scatters.append(axes[0].scatter([], [], s=20))
     scatters.append(axes[1].scatter([], [], s=20))
@@ -73,6 +77,7 @@ def save_rollout_frame_strip(
     predicted: Tensor,
     output: str | Path,
     max_frames: int = 8,
+    bounds: list[list[float]] | None = None,
 ):
     """Save a static strip comparing rollout frames."""
     ground_truth = torch.as_tensor(ground_truth).detach().cpu()
@@ -89,8 +94,7 @@ def save_rollout_frame_strip(
             ax = axes[row, col]
             frame = rollout[frame_id]
             ax.scatter(frame[:, 0], frame[:, 1], s=14, c=frame[:, 0], cmap="viridis")
-            ax.set_xlim(-0.05, 1.05)
-            ax.set_ylim(-0.05, 1.05)
+            _set_axes_bounds(ax, bounds)
             ax.set_aspect("equal")
             ax.set_xticks([])
             ax.set_yticks([])
@@ -104,3 +108,14 @@ def save_rollout_frame_strip(
     fig.savefig(output, dpi=180)
     plt.close(fig)
     return output
+
+
+def _set_axes_bounds(ax, bounds: list[list[float]] | None) -> None:
+    if bounds is None:
+        ax.set_xlim(-0.05, 1.05)
+        ax.set_ylim(-0.05, 1.05)
+        return
+    margin_x = 0.05 * (bounds[0][1] - bounds[0][0])
+    margin_y = 0.05 * (bounds[1][1] - bounds[1][0])
+    ax.set_xlim(bounds[0][0] - margin_x, bounds[0][1] + margin_x)
+    ax.set_ylim(bounds[1][0] - margin_y, bounds[1][1] + margin_y)

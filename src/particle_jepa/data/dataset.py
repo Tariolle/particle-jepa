@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+from particle_jepa.data.lts_dataset import (
+    LearningToSimulateConfig,
+    LearningToSimulateDataset,
+)
 from particle_jepa.data.toy_dataset import ToyParticleConfig, ToyParticleDataset
 
 
-def build_dataset(config: dict) -> ToyParticleDataset:
+def build_dataset(config: dict) -> ToyParticleDataset | LearningToSimulateDataset:
     name = config.get("dataset", config.get("name", "toy_particles"))
+    if name in {"learning_to_simulate", "lts"}:
+        aliases = {
+            "data_root": "root",
+            "graph_radius": "radius",
+            "horizon": "future_offset",
+        }
+        normalized = {aliases.get(key, key): value for key, value in config.items()}
+        fields = LearningToSimulateConfig.__dataclass_fields__
+        kwargs = {key: value for key, value in normalized.items() if key in fields}
+        return LearningToSimulateDataset(LearningToSimulateConfig(**kwargs))
     if name != "toy_particles":
         msg = f"Unsupported dataset '{name}'. Add it in particle_jepa.data.dataset."
         raise ValueError(msg)

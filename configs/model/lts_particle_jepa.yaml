@@ -1,0 +1,72 @@
+project:
+  name: particle-jepa
+  run_name: lts_particle_jepa_debug
+  seed: 42
+
+data:
+  dataset: learning_to_simulate
+  data_root: data/raw/WaterDropSample
+  split: train
+  horizon: 1
+  graph_radius: null
+  max_neighbors: null
+  max_trajectories: 2
+  sample_stride: 4
+  max_samples_per_trajectory: 128
+  batch_size: 2
+  num_workers: 0
+
+model:
+  type: particle_jepa
+  node_input_dim: 7
+  edge_input_dim: 6
+  hidden_dim: 128
+  latent_dim: 128
+  message_passing_steps: 5
+  mlp_layers: 2
+  pooling: mean
+  normalize_latents: true
+  dropout: 0.0
+  max_horizon: 32
+  latent_predictor_steps: 2
+
+loss:
+  type: prediction_sigreg
+  prediction_weight: 1.0
+  node_prediction_weight: 1.0
+  sigreg_weight: 0.05
+  sigreg_sketch_dim: 64
+
+optimizer:
+  name: adamw
+  lr: 0.0003
+  weight_decay: 0.0001
+
+training:
+  epochs: 3
+  grad_clip_norm: 1.0
+  checkpoint_every: 1
+  visualize_every: 1
+  device: auto
+  precision: fp16
+  compile: true
+  compile_mode: reduce-overhead
+  compile_fullgraph: false
+
+tracking:
+  provider: wandb
+  enabled: false
+  project: particle-jepa
+  entity: null
+  tags:
+    - lts
+    - waterdrop
+    - particle-jepa
+  mode: online
+
+paths:
+  run_root: runs
+
+hydra:
+  job:
+    chdir: false
