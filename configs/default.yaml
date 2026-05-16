@@ -18,6 +18,7 @@ model:
   latent_dim: 128
   message_passing_steps: 4
   dropout: 0.0
+  latent_predictor_steps: 2
 
 train:
   batch_size: 8

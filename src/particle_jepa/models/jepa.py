@@ -5,7 +5,7 @@ from torch import Tensor, nn
 from torch_geometric.data import Batch, Data
 
 from particle_jepa.models.encoders import ParticleGraphEncoder
-from particle_jepa.models.message_passing import make_mlp
+from particle_jepa.models.predictors import LatentGraphPredictor
 
 
 class ParticleJEPA(nn.Module):
@@ -21,6 +21,7 @@ class ParticleJEPA(nn.Module):
         dropout: float = 0.0,
         mlp_layers: int = 2,
         max_horizon: int = 32,
+        latent_predictor_steps: int = 2,
     ) -> None:
         super().__init__()
         self.context_encoder = ParticleGraphEncoder(
@@ -34,8 +35,14 @@ class ParticleJEPA(nn.Module):
         )
         self.target_encoder = self.context_encoder
         self.horizon_embedding = nn.Embedding(max_horizon + 1, latent_dim)
-        self.predictor = make_mlp(latent_dim * 2, hidden_dim, latent_dim, dropout, mlp_layers)
-        self.node_predictor = make_mlp(latent_dim * 2, hidden_dim, latent_dim, dropout, mlp_layers)
+        self.predictor = LatentGraphPredictor(
+            latent_dim=latent_dim,
+            edge_dim=edge_dim,
+            hidden_dim=hidden_dim,
+            steps=latent_predictor_steps,
+            dropout=dropout,
+            mlp_layers=mlp_layers,
+        )
 
     def forward(
         self, context_graph: Data | Batch, future_graph: Data | Batch, horizon: Tensor | None = None
@@ -46,10 +53,10 @@ class ParticleJEPA(nn.Module):
             context_graph, context_latent.size(0), context_latent.device, horizon
         )
         horizon_latent = self.horizon_embedding(horizon)
-        node_horizon_latent = horizon_latent[_node_batch(context_graph, context_node_latents)]
-        prediction = self.predictor(torch.cat([context_latent, horizon_latent], dim=-1))
-        node_prediction = self.node_predictor(
-            torch.cat([context_node_latents, node_horizon_latent], dim=-1)
+        node_prediction, prediction = self.predictor(
+            context_node_latents,
+            context_graph,
+            horizon_latent,
         )
         return {
             "prediction": prediction,
@@ -72,10 +79,3 @@ def _resolve_horizon(
     if horizon.numel() == 1 and batch_size > 1:
         horizon = horizon.expand(batch_size)
     return horizon.clamp_min(0)
-
-
-def _node_batch(graph: Data | Batch, node_latents: Tensor) -> Tensor:
-    batch = getattr(graph, "batch", None)
-    if batch is None:
-        return torch.zeros(node_latents.size(0), dtype=torch.long, device=node_latents.device)
-    return batch

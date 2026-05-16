@@ -110,6 +110,7 @@ def _build_rollout_model(config: dict):
             **kwargs,
             latent_dim=model_cfg.get("latent_dim", 128),
             max_horizon=model_cfg.get("max_horizon", 32),
+            latent_predictor_steps=model_cfg.get("latent_predictor_steps", 2),
         )
     if experiment == "gns":
         return GraphNetworkSimulator(**kwargs)

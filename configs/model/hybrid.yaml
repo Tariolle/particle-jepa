@@ -27,6 +27,7 @@ model:
   normalize_latents: true
   dropout: 0.0
   max_horizon: 32
+  latent_predictor_steps: 2
 
 loss:
   type: hybrid

@@ -146,6 +146,7 @@ def _build_jepa(config: dict) -> ParticleJEPA:
         dropout=model_cfg.get("dropout", 0.0),
         mlp_layers=model_cfg.get("mlp_layers", 2),
         max_horizon=model_cfg.get("max_horizon", 32),
+        latent_predictor_steps=model_cfg.get("latent_predictor_steps", 2),
     )
 
 
