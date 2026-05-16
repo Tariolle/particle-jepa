@@ -1,9 +1,17 @@
+# ruff: noqa: E402, I001
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
 import torch
 from torch_geometric.loader import DataLoader
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from particle_jepa.data.dataset import build_dataset
 from particle_jepa.evaluation.metrics import cosine_alignment

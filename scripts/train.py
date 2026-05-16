@@ -1,13 +1,20 @@
+# ruff: noqa: E402, I001
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import random_split
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from particle_jepa.data.dataset import build_dataset
 from particle_jepa.training.train_gns import train_gns
@@ -33,7 +40,7 @@ def main() -> None:
         hydra_main()
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="model/particle_jepa")
+@hydra.main(version_base="1.3", config_path="../configs/model", config_name="particle_jepa")
 def hydra_main(cfg: DictConfig) -> None:
     config = normalize_experiment_config(OmegaConf.to_container(cfg, resolve=True))
     run_training(config, config_source=None)

@@ -83,13 +83,13 @@ python scripts/train.py
 Train the baseline GNS-style model:
 
 ```bash
-python scripts/train.py --config-name model/gns
+python scripts/train.py --config-name gns
 ```
 
 Train the hybrid model:
 
 ```bash
-python scripts/train.py --config-name model/hybrid
+python scripts/train.py --config-name hybrid
 ```
 
 Use Hydra overrides:
