@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import copy
-
 import torch
 from torch import Tensor, nn
 from torch_geometric.data import Batch, Data
@@ -34,35 +32,33 @@ class ParticleJEPA(nn.Module):
             dropout=dropout,
             mlp_layers=mlp_layers,
         )
-        self.target_encoder = copy.deepcopy(self.context_encoder)
-        for parameter in self.target_encoder.parameters():
-            parameter.requires_grad = False
+        self.target_encoder = self.context_encoder
         self.horizon_embedding = nn.Embedding(max_horizon + 1, latent_dim)
         self.predictor = make_mlp(latent_dim * 2, hidden_dim, latent_dim, dropout, mlp_layers)
+        self.node_predictor = make_mlp(latent_dim * 2, hidden_dim, latent_dim, dropout, mlp_layers)
 
     def forward(
         self, context_graph: Data | Batch, future_graph: Data | Batch, horizon: Tensor | None = None
     ) -> dict[str, Tensor]:
-        _, context_latent = self.context_encoder(context_graph)
-        with torch.no_grad():
-            _, target_latent = self.target_encoder(future_graph)
+        context_node_latents, context_latent = self.context_encoder(context_graph)
+        target_node_latents, target_latent = self.target_encoder(future_graph)
         horizon = _resolve_horizon(
             context_graph, context_latent.size(0), context_latent.device, horizon
         )
         horizon_latent = self.horizon_embedding(horizon)
+        node_horizon_latent = horizon_latent[_node_batch(context_graph, context_node_latents)]
         prediction = self.predictor(torch.cat([context_latent, horizon_latent], dim=-1))
+        node_prediction = self.node_predictor(
+            torch.cat([context_node_latents, node_horizon_latent], dim=-1)
+        )
         return {
             "prediction": prediction,
-            "target": target_latent.detach(),
+            "target": target_latent,
             "context": context_latent,
+            "node_prediction": node_prediction,
+            "node_target": target_node_latents,
+            "node_context": context_node_latents,
         }
-
-    @torch.no_grad()
-    def update_target_encoder(self, decay: float = 0.99) -> None:
-        for target_param, context_param in zip(
-            self.target_encoder.parameters(), self.context_encoder.parameters(), strict=True
-        ):
-            target_param.data.mul_(decay).add_(context_param.data, alpha=1.0 - decay)
 
 
 def _resolve_horizon(
@@ -76,3 +72,10 @@ def _resolve_horizon(
     if horizon.numel() == 1 and batch_size > 1:
         horizon = horizon.expand(batch_size)
     return horizon.clamp_min(0)
+
+
+def _node_batch(graph: Data | Batch, node_latents: Tensor) -> Tensor:
+    batch = getattr(graph, "batch", None)
+    if batch is None:
+        return torch.zeros(node_latents.size(0), dtype=torch.long, device=node_latents.device)
+    return batch

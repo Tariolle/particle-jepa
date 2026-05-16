@@ -40,6 +40,9 @@ def train_hybrid(
     criterion = HybridLoss(
         dynamics_weight=train_cfg.get("dynamics_loss_weight", 1.0),
         jepa_weight=train_cfg.get("jepa_loss_weight", 0.2),
+        node_weight=train_cfg.get("node_prediction_weight", 1.0),
+        sigreg_weight=train_cfg.get("sigreg_weight", 0.05),
+        sigreg_sketch_dim=train_cfg.get("sigreg_sketch_dim", 64),
     )
     scaler = make_grad_scaler(device, config)
 
@@ -58,7 +61,6 @@ def train_hybrid(
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
             scaler.step(optimizer)
             scaler.update()
-            _unwrap(model).update_target_encoder(model_cfg.get("target_ema_decay", 0.99))
             running += losses["loss"].item()
         train_loss = running / max(len(loader), 1)
         val_loss = (
@@ -71,10 +73,6 @@ def train_hybrid(
             tracker.log(row, step=epoch + 1)
         print(f"epoch={epoch + 1} loss={train_loss:.6f} val_loss={val_loss}")
     return model
-
-
-def _unwrap(model):
-    return getattr(model, "_orig_mod", model)
 
 
 def _evaluate(model: HybridGNSJEPA, loader, criterion: HybridLoss, device: torch.device) -> float:

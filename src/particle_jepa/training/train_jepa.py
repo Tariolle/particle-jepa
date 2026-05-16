@@ -5,7 +5,7 @@ from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from particle_jepa.models import ParticleJEPA
-from particle_jepa.training.losses import jepa_loss
+from particle_jepa.training.losses import temporal_graph_jepa_loss
 from particle_jepa.utils.perf import autocast_context, compile_model, make_grad_scaler
 from particle_jepa.utils.runs import append_jsonl
 
@@ -48,13 +48,13 @@ def train_jepa(
             optimizer.zero_grad(set_to_none=True)
             with autocast_context(device, config):
                 outputs = model(context, future)
-                loss = jepa_loss(outputs["prediction"], outputs["target"])
+                losses = temporal_graph_jepa_loss(outputs, config)
+                loss = losses["loss"]
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
             scaler.step(optimizer)
             scaler.update()
-            _unwrap(model).update_target_encoder(model_cfg.get("target_ema_decay", 0.99))
             running += loss.item()
         train_loss = running / max(len(loader), 1)
         val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
@@ -67,10 +67,6 @@ def train_jepa(
     return model
 
 
-def _unwrap(model):
-    return getattr(model, "_orig_mod", model)
-
-
 def _evaluate(model: ParticleJEPA, loader, device: torch.device) -> float:
     model.eval()
     running = 0.0
@@ -80,5 +76,5 @@ def _evaluate(model: ParticleJEPA, loader, device: torch.device) -> float:
             future = future.to(device)
             with autocast_context(device, {"train": {"precision": "fp16"}}):
                 outputs = model(context, future)
-                running += jepa_loss(outputs["prediction"], outputs["target"]).item()
+                running += temporal_graph_jepa_loss(outputs, {"train": {}})["loss"].item()
     return running / max(len(loader), 1)

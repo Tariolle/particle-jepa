@@ -27,12 +27,14 @@ model:
   normalize_latents: true
   dropout: 0.0
   max_horizon: 32
-  target_ema_decay: 0.99
 
 loss:
   type: hybrid
   dynamics_loss_weight: 1.0
   jepa_loss_weight: 0.2
+  node_prediction_weight: 1.0
+  sigreg_weight: 0.05
+  sigreg_sketch_dim: 64
 
 optimizer:
   name: adamw

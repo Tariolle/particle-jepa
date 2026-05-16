@@ -47,7 +47,6 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "mlp_layers": model.get("mlp_layers", 2),
                 "dropout": model.get("dropout", 0.0),
                 "max_horizon": model.get("max_horizon", 32),
-                "target_ema_decay": model.get("target_ema_decay", 0.99),
             },
             "train": {
                 "batch_size": data.get("batch_size", 8),
@@ -63,6 +62,10 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "compile_fullgraph": training.get("compile_fullgraph", False),
                 "dynamics_loss_weight": loss.get("dynamics_loss_weight", 1.0),
                 "jepa_loss_weight": loss.get("jepa_loss_weight", 0.2),
+                "prediction_weight": loss.get("prediction_weight", 1.0),
+                "node_prediction_weight": loss.get("node_prediction_weight", 1.0),
+                "sigreg_weight": loss.get("sigreg_weight", 0.05),
+                "sigreg_sketch_dim": loss.get("sigreg_sketch_dim", 64),
             },
             "paths": config.get("paths", {"run_root": "runs"}),
             "tracking": config.get("tracking", {"provider": "wandb", "enabled": False}),

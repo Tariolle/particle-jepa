@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from particle_jepa.training.losses import acceleration_loss, jepa_loss
+from particle_jepa.training.losses import acceleration_loss, jepa_loss, sigreg_loss
 
 
 def test_acceleration_loss_is_zero_for_equal_tensors() -> None:
@@ -39,3 +39,10 @@ def test_jepa_loss_decreases_on_tiny_overfit_batch() -> None:
     assert first_loss is not None
     assert last_loss is not None
     assert last_loss < first_loss
+
+
+def test_sigreg_loss_penalizes_collapsed_latents() -> None:
+    collapsed = torch.zeros(16, 8)
+    varied = torch.randn(16, 8)
+
+    assert sigreg_loss(collapsed) > sigreg_loss(varied)
