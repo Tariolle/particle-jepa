@@ -111,6 +111,12 @@ Create a toy rollout visualization:
 python scripts/visualize.py --run latest
 ```
 
+Export a latent future retrieval panel from a Particle-JEPA checkpoint:
+
+```bash
+python scripts/retrieve.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --top-k 3
+```
+
 Training writes run artifacts to:
 
 ```text
