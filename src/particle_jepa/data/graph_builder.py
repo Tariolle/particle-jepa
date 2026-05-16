@@ -5,6 +5,22 @@ from torch import Tensor
 from torch_geometric.data import Data
 
 
+def build_radius_graph(
+    positions: Tensor,
+    velocities: Tensor,
+    radius: float,
+    max_neighbors: int | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Build dynamic radius-graph edges and edge features.
+
+    Edge attributes are relative position, relative velocity, Euclidean distance,
+    and distance normalized by the graph radius.
+    """
+    builder = ParticleGraphBuilder(radius=radius, max_neighbors=max_neighbors)
+    graph = builder.build(positions, velocities)
+    return graph.edge_index, graph.edge_attr
+
+
 class ParticleGraphBuilder:
     """Build a radius graph from particle positions and velocities."""
 
@@ -39,13 +55,14 @@ class ParticleGraphBuilder:
             edge_index = self._limit_neighbors(edge_index, distance, num_particles)
 
         if edge_index.numel() == 0:
-            edge_attr = torch.empty((0, spatial_dim * 2 + 1), dtype=positions.dtype, device=device)
+            edge_attr = torch.empty((0, spatial_dim * 2 + 2), dtype=positions.dtype, device=device)
         else:
             src, dst = edge_index
             rel_pos = positions[dst] - positions[src]
             rel_vel = velocities[dst] - velocities[src]
             rel_dist = torch.linalg.norm(rel_pos, dim=-1, keepdim=True)
-            edge_attr = torch.cat([rel_pos, rel_vel, rel_dist], dim=-1)
+            norm_dist = rel_dist / max(self.radius, 1e-8)
+            edge_attr = torch.cat([rel_pos, rel_vel, rel_dist, norm_dist], dim=-1)
 
         return Data(
             x=x,

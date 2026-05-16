@@ -16,11 +16,13 @@ class HybridGNSJEPA(nn.Module):
     def __init__(
         self,
         node_dim: int = 7,
-        edge_dim: int = 5,
+        edge_dim: int = 6,
         hidden_dim: int = 128,
         latent_dim: int = 128,
         message_passing_steps: int = 4,
         dropout: float = 0.0,
+        mlp_layers: int = 2,
+        max_horizon: int = 32,
     ) -> None:
         super().__init__()
         self.encoder = ParticleGraphEncoder(
@@ -30,6 +32,7 @@ class HybridGNSJEPA(nn.Module):
             latent_dim=latent_dim,
             message_passing_steps=message_passing_steps,
             dropout=dropout,
+            mlp_layers=mlp_layers,
         )
         self.target_encoder = ParticleGraphEncoder(
             node_dim=node_dim,
@@ -38,16 +41,24 @@ class HybridGNSJEPA(nn.Module):
             latent_dim=latent_dim,
             message_passing_steps=message_passing_steps,
             dropout=dropout,
+            mlp_layers=mlp_layers,
         )
-        self.dynamics_head = AccelerationDecoder(latent_dim, hidden_dim)
-        self.predictor = make_mlp(latent_dim, hidden_dim, latent_dim, dropout)
+        self.dynamics_head = AccelerationDecoder(latent_dim, hidden_dim, mlp_layers=mlp_layers)
+        self.horizon_embedding = nn.Embedding(max_horizon + 1, latent_dim)
+        self.predictor = make_mlp(latent_dim * 2, hidden_dim, latent_dim, dropout, mlp_layers)
 
-    def forward(self, context_graph: Data | Batch, future_graph: Data | Batch) -> dict[str, Tensor]:
+    def forward(
+        self, context_graph: Data | Batch, future_graph: Data | Batch, horizon: Tensor | None = None
+    ) -> dict[str, Tensor]:
         node_latents, context_latent = self.encoder(context_graph)
         acceleration = self.dynamics_head(node_latents)
         with torch.no_grad():
             _, target_latent = self.target_encoder(future_graph)
-        prediction = self.predictor(context_latent)
+        horizon = _resolve_horizon(
+            context_graph, context_latent.size(0), context_latent.device, horizon
+        )
+        horizon_latent = self.horizon_embedding(horizon)
+        prediction = self.predictor(torch.cat([context_latent, horizon_latent], dim=-1))
         return {
             "acceleration": acceleration,
             "prediction": prediction,
@@ -61,3 +72,16 @@ class HybridGNSJEPA(nn.Module):
         if batch is None:
             batch = torch.zeros(node_latents.size(0), dtype=torch.long, device=node_latents.device)
         return global_mean_pool(node_latents, batch)
+
+
+def _resolve_horizon(
+    graph: Data | Batch, batch_size: int, device: torch.device, horizon: Tensor | None
+) -> Tensor:
+    if horizon is None:
+        horizon = getattr(graph, "horizon", None)
+    if horizon is None:
+        horizon = torch.ones(batch_size, dtype=torch.long, device=device)
+    horizon = horizon.to(device=device, dtype=torch.long).view(-1)
+    if horizon.numel() == 1 and batch_size > 1:
+        horizon = horizon.expand(batch_size)
+    return horizon.clamp_min(0)

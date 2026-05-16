@@ -13,7 +13,7 @@ data:
 
 model:
   node_dim: 7
-  edge_dim: 5
+  edge_dim: 6
   hidden_dim: 128
   latent_dim: 128
   message_passing_steps: 4

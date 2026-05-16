@@ -8,7 +8,7 @@ from torch_geometric.loader import DataLoader
 from particle_jepa.data.dataset import build_dataset
 from particle_jepa.evaluation.metrics import cosine_alignment
 from particle_jepa.models import ParticleJEPA
-from particle_jepa.utils.config import load_config
+from particle_jepa.utils.config import load_config, normalize_experiment_config
 
 
 def main() -> None:
@@ -16,7 +16,7 @@ def main() -> None:
     parser.add_argument("--config", default="configs/default.yaml")
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    config = normalize_experiment_config(load_config(args.config))
     dataset = build_dataset(config["data"])
     loader = DataLoader(dataset, batch_size=config["train"]["batch_size"])
     model = ParticleJEPA(**config["model"])

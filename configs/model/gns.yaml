@@ -1,6 +1,42 @@
-name: gns
-node_dim: 7
-edge_dim: 5
-hidden_dim: 128
-message_passing_steps: 5
-dropout: 0.0
+project:
+  name: particle-jepa
+  run_name: gns_debug
+  seed: 42
+
+data:
+  dataset: toy_particles
+  num_train_trajectories: 100
+  num_val_trajectories: 20
+  trajectory_length: 100
+  num_particles: 64
+  dimension: 2
+  dt: 0.01
+  graph_radius: 0.15
+  horizon: 5
+  batch_size: 8
+  num_workers: 0
+
+model:
+  type: gns
+  node_input_dim: 7
+  edge_input_dim: 6
+  hidden_dim: 128
+  message_passing_steps: 5
+  mlp_layers: 2
+  prediction_target: acceleration
+  dropout: 0.0
+
+loss:
+  type: acceleration_mse
+
+optimizer:
+  name: adamw
+  lr: 0.0003
+  weight_decay: 0.0001
+
+training:
+  epochs: 10
+  grad_clip_norm: 1.0
+  checkpoint_every: 5
+  visualize_every: 5
+  device: auto

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
+import json
 
 import torch
+from torch.utils.data import random_split
 
 from particle_jepa.data.dataset import build_dataset
 from particle_jepa.training.train_gns import train_gns
 from particle_jepa.training.train_hybrid import train_hybrid
 from particle_jepa.training.train_jepa import train_jepa
 from particle_jepa.utils.checkpointing import save_checkpoint
-from particle_jepa.utils.config import load_config
+from particle_jepa.utils.config import load_config, normalize_experiment_config
+from particle_jepa.utils.runs import copy_config, create_run_dir
 from particle_jepa.utils.seed import seed_everything
 
 
@@ -23,27 +25,58 @@ def resolve_device(value: str) -> torch.device:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train Particle-JEPA experiments.")
     parser.add_argument("--config", default="configs/default.yaml")
-    parser.add_argument("--experiment", choices=["gns", "jepa", "hybrid"], default="jepa")
+    parser.add_argument("--experiment", choices=["gns", "jepa", "hybrid"], default=None)
     parser.add_argument("--checkpoint", default=None)
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    config = normalize_experiment_config(load_config(args.config))
+    experiment = args.experiment or _canonical_experiment(config.get("experiment", "jepa"))
     seed_everything(config.get("seed", 7))
     device = resolve_device(config.get("device", "auto"))
     dataset = build_dataset(config["data"])
+    train_dataset, val_dataset = _split_dataset(dataset, config["data"], config.get("seed", 7))
+    run_root = config.get("paths", {}).get("run_root", "runs")
+    run_dir = create_run_dir(experiment, run_root)
+    copy_config(args.config, run_dir)
 
-    if args.experiment == "gns":
-        model = train_gns(dataset, config, device)
-    elif args.experiment == "hybrid":
-        model = train_hybrid(dataset, config, device)
+    if experiment == "gns":
+        model = train_gns(train_dataset, config, device, val_dataset=val_dataset, run_dir=run_dir)
+    elif experiment == "hybrid":
+        model = train_hybrid(
+            train_dataset, config, device, val_dataset=val_dataset, run_dir=run_dir
+        )
     else:
-        model = train_jepa(dataset, config, device)
+        model = train_jepa(train_dataset, config, device, val_dataset=val_dataset, run_dir=run_dir)
 
     checkpoint_path = args.checkpoint
     if checkpoint_path is None:
-        checkpoint_path = Path(config["paths"]["checkpoint_dir"]) / f"{args.experiment}.pt"
+        checkpoint_path = run_dir / "checkpoints" / "last.pt"
     save_checkpoint({"model": model.state_dict(), "config": config}, checkpoint_path)
+    metrics_path = run_dir / "metrics.json"
+    metrics_path.write_text(
+        json.dumps({"checkpoint": str(checkpoint_path)}, indent=2), encoding="utf-8"
+    )
     print(f"saved checkpoint: {checkpoint_path}")
+    print(f"run directory: {run_dir}")
+
+
+def _canonical_experiment(value: str) -> str:
+    aliases = {"particle_jepa": "jepa"}
+    return aliases.get(value, value)
+
+
+def _split_dataset(dataset, data_config: dict, seed: int):
+    val_trajectories = int(data_config.get("num_val_trajectories", 0))
+    total_trajectories = int(data_config.get("num_trajectories", 0)) or (
+        int(data_config.get("num_train_trajectories", 0)) + val_trajectories
+    )
+    if val_trajectories <= 0 or total_trajectories <= 0:
+        return dataset, None
+    val_fraction = min(max(val_trajectories / total_trajectories, 0.0), 0.5)
+    val_size = max(1, int(len(dataset) * val_fraction))
+    train_size = len(dataset) - val_size
+    generator = torch.Generator().manual_seed(seed)
+    return random_split(dataset, [train_size, val_size], generator=generator)
 
 
 if __name__ == "__main__":

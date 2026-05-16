@@ -6,9 +6,12 @@ from tqdm import tqdm
 
 from particle_jepa.models import HybridGNSJEPA
 from particle_jepa.training.losses import HybridLoss
+from particle_jepa.utils.runs import append_jsonl
 
 
-def train_hybrid(dataset, config: dict, device: torch.device) -> HybridGNSJEPA:
+def train_hybrid(
+    dataset, config: dict, device: torch.device, val_dataset=None, run_dir=None
+) -> HybridGNSJEPA:
     model_cfg = config["model"]
     train_cfg = config["train"]
     model = HybridGNSJEPA(
@@ -18,8 +21,15 @@ def train_hybrid(dataset, config: dict, device: torch.device) -> HybridGNSJEPA:
         latent_dim=model_cfg["latent_dim"],
         message_passing_steps=model_cfg["message_passing_steps"],
         dropout=model_cfg.get("dropout", 0.0),
+        mlp_layers=model_cfg.get("mlp_layers", 2),
+        max_horizon=model_cfg.get("max_horizon", 32),
     ).to(device)
     loader = DataLoader(dataset, batch_size=train_cfg["batch_size"], shuffle=True)
+    val_loader = (
+        DataLoader(val_dataset, batch_size=train_cfg["batch_size"], shuffle=False)
+        if val_dataset is not None
+        else None
+    )
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=train_cfg["learning_rate"],
@@ -43,5 +53,23 @@ def train_hybrid(dataset, config: dict, device: torch.device) -> HybridGNSJEPA:
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
             optimizer.step()
             running += losses["loss"].item()
-        print(f"epoch={epoch + 1} loss={running / max(len(loader), 1):.6f}")
+        train_loss = running / max(len(loader), 1)
+        val_loss = (
+            _evaluate(model, val_loader, criterion, device) if val_loader is not None else None
+        )
+        row = {"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss}
+        if run_dir is not None:
+            append_jsonl(run_dir / "logs.jsonl", row)
+        print(f"epoch={epoch + 1} loss={train_loss:.6f} val_loss={val_loss}")
     return model
+
+
+def _evaluate(model: HybridGNSJEPA, loader, criterion: HybridLoss, device: torch.device) -> float:
+    model.eval()
+    running = 0.0
+    with torch.no_grad():
+        for context, future in loader:
+            context = context.to(device)
+            future = future.to(device)
+            running += criterion(model(context, future), context)["loss"].item()
+    return running / max(len(loader), 1)

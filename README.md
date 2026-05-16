@@ -4,6 +4,8 @@
 
 Particle-JEPA is a compact research project for learning graph-native world models on particle simulations. It represents physical systems as dynamic graphs and trains Graph Neural Networks with a JEPA-style latent future prediction objective.
 
+Particle-JEPA explores whether JEPA-style latent future prediction can improve graph-based learned physical simulators. Instead of only predicting the next particle positions, the model learns to predict the representation of a future particle graph, enabling future retrieval, latent rollout analysis, and potentially more robust long-horizon world modeling.
+
 The central question:
 
 > Can a JEPA-style latent future prediction objective improve learned graph-based physical world models, especially in representation quality, future retrieval, and long-horizon rollout behavior?
@@ -22,9 +24,15 @@ Particle systems are naturally graph structured:
 Instead of predicting only the next particle position, Particle-JEPA learns to predict a future graph representation in latent space:
 
 ```text
-graph at t -> context encoder -> latent context
-graph at t+k -> target encoder  -> latent target
-latent context -> predictor      -> future latent target
+Particle rollout
+      ↓
+Dynamic radius graph
+      ↓
+GNN context encoder ───────┐
+                           ↓
+                     JEPA predictor ──→ predicted future embedding
+                           ↑
+Future graph ─→ GNN target encoder ───→ target future embedding
 ```
 
 ## Current Capabilities
@@ -67,19 +75,37 @@ pytest
 Train the JEPA toy model:
 
 ```bash
-python scripts/train.py --config configs/default.yaml --experiment jepa
+python scripts/train.py --config configs/model/particle_jepa.yaml
 ```
 
 Train the baseline GNS-style model:
 
 ```bash
-python scripts/train.py --config configs/default.yaml --experiment gns
+python scripts/train.py --config configs/model/gns.yaml
+```
+
+Train the hybrid model:
+
+```bash
+python scripts/train.py --config configs/model/hybrid.yaml
 ```
 
 Create a toy rollout visualization:
 
 ```bash
-python scripts/visualize.py --output outputs/toy_particles.png
+python scripts/visualize.py --run latest
+```
+
+Training writes run artifacts to:
+
+```text
+runs/
+└── YYYYMMDD_HHMMSS_model_name/
+    ├── config.yaml
+    ├── checkpoints/
+    ├── logs.jsonl
+    ├── metrics.json
+    └── visualizations/
 ```
 
 ## Repository Layout
@@ -107,13 +133,28 @@ A graph encoder embeds the current particle graph. A target encoder embeds a fut
 
 The hybrid model shares graph representations across physical prediction and latent future prediction, enabling combined supervised dynamics and self-supervised representation learning.
 
+The planned paper angle:
+
+> Can JEPA-style latent future prediction provide a useful auxiliary objective for graph neural particle simulators?
+
+Model variants:
+
+```text
+1. GNS baseline
+2. Particle-JEPA
+3. Hybrid GNS + JEPA
+```
+
 ## Evaluation Ideas
 
 - Next-step position and velocity prediction error.
 - Long-horizon rollout RMSE.
+- Rollout Chamfer distance.
 - Latent future retrieval accuracy.
+- Latent prediction MSE and cosine similarity.
 - Latent trajectory alignment.
 - Qualitative side-by-side rollout videos.
+- Latent future retrieval panels.
 
 ## Dataset Roadmap
 
@@ -125,6 +166,21 @@ Expected future integrations:
 - Material and boundary metadata parsing.
 - Dataset-specific normalization.
 - Multi-material rollout evaluation.
+
+## Roadmap
+
+- Add full DeepMind Learning-to-Simulate conversion and normalization.
+- Add EMA target encoder updates for Particle-JEPA.
+- Expand rollout evaluation with dataset-specific boundary handling.
+- Add retrieval visualizations from trained checkpoints.
+- Add optional experiment tracking with wandb or TensorBoard.
+- Produce polished GIF/MP4 rollout comparisons for portfolio use.
+
+## References
+
+- Sanchez-Gonzalez et al., *Learning to Simulate Complex Physics with Graph Networks*, ICML 2020.
+- LeCun, *A Path Towards Autonomous Machine Intelligence*, 2022.
+- Assran et al., *Self-Supervised Learning from Images with a Joint-Embedding Predictive Architecture*, CVPR 2023.
 
 ## License
 

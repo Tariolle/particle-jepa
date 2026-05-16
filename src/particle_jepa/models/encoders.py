@@ -17,11 +17,12 @@ class ParticleGraphEncoder(nn.Module):
         latent_dim: int = 128,
         message_passing_steps: int = 4,
         dropout: float = 0.0,
+        mlp_layers: int = 2,
     ) -> None:
         super().__init__()
-        self.node_encoder = make_mlp(node_dim, hidden_dim, hidden_dim, dropout)
-        self.edge_encoder = make_mlp(edge_dim, hidden_dim, hidden_dim, dropout)
-        self.processor = GraphProcessor(hidden_dim, message_passing_steps, dropout)
+        self.node_encoder = make_mlp(node_dim, hidden_dim, hidden_dim, dropout, mlp_layers)
+        self.edge_encoder = make_mlp(edge_dim, hidden_dim, hidden_dim, dropout, mlp_layers)
+        self.processor = GraphProcessor(hidden_dim, message_passing_steps, dropout, mlp_layers)
         self.projection = nn.Linear(hidden_dim, latent_dim)
 
     def forward(self, graph: Data | Batch) -> tuple[Tensor, Tensor]:
