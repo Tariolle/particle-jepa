@@ -49,6 +49,8 @@ class LearningToSimulateConfig:
     max_trajectories: int | None = None
     sample_stride: int = 1
     max_samples_per_trajectory: int | None = 128
+    normalize_acceleration: bool = True
+    kinematic_particle_id: int = 3
 
 
 class LearningToSimulateDataset(Dataset):
@@ -109,11 +111,16 @@ class LearningToSimulateDataset(Dataset):
         next_idx = min(time_idx + 1, trajectory["positions"].size(0) - 1)
         next_position = trajectory["positions"][next_idx]
         next_velocity = trajectory["velocities"][next_idx]
-        acceleration = (next_velocity - context.velocity) / max(self.dt, 1e-12)
+        raw_acceleration = next_velocity - context.velocity
+        acceleration = self._normalize_acceleration(raw_acceleration)
+        dynamic_mask = particle_type != self.config.kinematic_particle_id
 
         context.y_pos = next_position
         context.y_velocity = next_velocity
+        context.y_acceleration_raw = raw_acceleration
         context.y_acceleration = acceleration
+        context.dynamic_mask = dynamic_mask.float()
+        context.kinematic_mask = (~dynamic_mask).float()
         context.horizon = torch.tensor([self.config.future_offset], dtype=torch.long)
         future.horizon = torch.tensor([self.config.future_offset], dtype=torch.long)
         if "step_context" in trajectory:
@@ -142,6 +149,13 @@ class LearningToSimulateDataset(Dataset):
         near_lower = positions <= lower + self.radius
         near_upper = positions >= upper - self.radius
         return (near_lower | near_upper).any(dim=-1).float()
+
+    def _normalize_acceleration(self, acceleration: Tensor) -> Tensor:
+        if not self.config.normalize_acceleration:
+            return acceleration
+        mean = torch.tensor(self.metadata["acc_mean"], dtype=acceleration.dtype)
+        std = torch.tensor(self.metadata["acc_std"], dtype=acceleration.dtype).clamp_min(1e-8)
+        return (acceleration - mean) / std
 
 
 def load_metadata(root: str | Path) -> dict:
@@ -206,9 +220,8 @@ def decode_lts_sequence_example(payload: bytes, metadata: dict) -> dict[str, Ten
     particle_types = _decode_int64_bytes_feature(
         example.context.feature["particle_type"].bytes_list.value
     )
-    dt = float(metadata.get("dt", 1.0))
     velocities = np.zeros_like(positions)
-    velocities[1:] = (positions[1:] - positions[:-1]) / dt
+    velocities[1:] = positions[1:] - positions[:-1]
     velocities[0] = velocities[1]
 
     trajectory: dict[str, Tensor | dict] = {

@@ -5,8 +5,14 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 
-def acceleration_loss(predicted: Tensor, target: Tensor) -> Tensor:
-    return F.mse_loss(predicted, target)
+def acceleration_loss(predicted: Tensor, target: Tensor, mask: Tensor | None = None) -> Tensor:
+    error = (predicted - target).pow(2)
+    if mask is None:
+        return error.mean()
+    if mask.ndim == 1:
+        mask = mask[:, None]
+    mask = mask.to(device=error.device, dtype=error.dtype)
+    return (error * mask).sum() / mask.sum().clamp_min(1.0)
 
 
 def latent_prediction_loss(prediction: Tensor, target: Tensor, normalize: bool = True) -> Tensor:
@@ -86,7 +92,9 @@ class HybridLoss(nn.Module):
         self.sigreg_sketch_dim = sigreg_sketch_dim
 
     def forward(self, outputs: dict[str, Tensor], graph) -> dict[str, Tensor]:
-        dyn = acceleration_loss(outputs["acceleration"], graph.y_acceleration)
+        dyn = acceleration_loss(
+            outputs["acceleration"], graph.y_acceleration, getattr(graph, "dynamic_mask", None)
+        )
         rep = latent_prediction_loss(outputs["prediction"], outputs["target"].detach())
         node = latent_prediction_loss(outputs["node_prediction"], outputs["node_target"].detach())
         sigreg = (

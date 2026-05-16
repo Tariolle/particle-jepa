@@ -45,7 +45,9 @@ def train_gns(
             optimizer.zero_grad(set_to_none=True)
             with autocast_context(device, config):
                 prediction = model(context)
-                loss = acceleration_loss(prediction, context.y_acceleration)
+                loss = acceleration_loss(
+                    prediction, context.y_acceleration, getattr(context, "dynamic_mask", None)
+                )
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
@@ -70,5 +72,7 @@ def _evaluate(model: GraphNetworkSimulator, loader, device: torch.device) -> flo
         for context, _future in loader:
             context = context.to(device)
             with autocast_context(device, {"train": {"precision": "fp16"}}):
-                running += acceleration_loss(model(context), context.y_acceleration).item()
+                running += acceleration_loss(
+                    model(context), context.y_acceleration, getattr(context, "dynamic_mask", None)
+                ).item()
     return running / max(len(loader), 1)

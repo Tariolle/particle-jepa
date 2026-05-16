@@ -19,6 +19,8 @@ def test_lts_dataset_decodes_sequence_example(tmp_path) -> None:
         "default_connectivity_radius": 0.4,
         "dim": 2,
         "dt": 0.1,
+        "acc_mean": [0.0, 0.0],
+        "acc_std": [1.0, 1.0],
     }
     (tmp_path / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
     payload = _fake_lts_sequence_payload()
@@ -39,6 +41,7 @@ def test_lts_dataset_decodes_sequence_example(tmp_path) -> None:
     assert future.x.shape == (4, 7)
     assert context.edge_attr.shape[1] == 6
     assert context.y_acceleration.shape == (4, 2)
+    assert context.dynamic_mask.shape == (4,)
     assert context.horizon.item() == 1
 
 

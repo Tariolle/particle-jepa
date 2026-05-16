@@ -55,5 +55,6 @@ Each edge has 6 features:
 dx, dy, dvx, dvy, distance, distance / radius
 ```
 
-Velocities are finite differences from official positions. The graph radius
-defaults to `metadata.json/default_connectivity_radius`.
+Velocities are frame-to-frame finite differences from official positions,
+matching the official GNS convention where rollout integration uses implicit
+`dt=1`. The graph radius defaults to `metadata.json/default_connectivity_radius`.

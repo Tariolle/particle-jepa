@@ -7,5 +7,7 @@ max_neighbors: null
 max_trajectories: 2
 sample_stride: 4
 max_samples_per_trajectory: 128
+normalize_acceleration: true
+kinematic_particle_id: 3
 batch_size: 2
 num_workers: 0

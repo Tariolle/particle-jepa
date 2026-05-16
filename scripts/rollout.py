@@ -30,6 +30,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", default=None, help="Path to a GNS or hybrid checkpoint.")
     parser.add_argument("--output", default=None)
     parser.add_argument("--steps", type=int, default=16)
+    parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
@@ -49,7 +50,7 @@ def main() -> None:
     model = compile_model(model, config)
     model.eval()
 
-    gt, pred, bounds = _rollout(model, config, device, args.steps, args.seed)
+    gt, pred, bounds = _rollout(model, config, device, args.steps, args.seed, args.start)
     error = rollout_error(pred, gt).item()
     output = (
         Path(args.output)
@@ -64,10 +65,10 @@ def main() -> None:
     print(f"saved rollout visualization: {output}")
 
 
-def _rollout(model, config: dict, device: torch.device, steps: int, seed: int):
+def _rollout(model, config: dict, device: torch.device, steps: int, seed: int, start: int):
     data_cfg = config["data"]
     if data_cfg.get("dataset") in {"learning_to_simulate", "lts"}:
-        return _rollout_lts(model, data_cfg, config, device, steps)
+        return _rollout_lts(model, data_cfg, config, device, steps, start)
     toy_config = ToyParticleConfig(
         num_trajectories=1,
         num_particles=int(data_cfg.get("num_particles", 64)),
@@ -103,7 +104,7 @@ def _rollout(model, config: dict, device: torch.device, steps: int, seed: int):
     return gt_positions.cpu(), torch.stack(predicted), None
 
 
-def _rollout_lts(model, data_cfg: dict, config: dict, device: torch.device, steps: int):
+def _rollout_lts(model, data_cfg: dict, config: dict, device: torch.device, steps: int, start: int):
     lts_config = LearningToSimulateConfig(
         root=data_cfg.get("data_root", data_cfg.get("root", "data/raw/WaterDropSample")),
         split=data_cfg.get("split", "train"),
@@ -116,10 +117,14 @@ def _rollout_lts(model, data_cfg: dict, config: dict, device: torch.device, step
     )
     dataset = LearningToSimulateDataset(lts_config)
     trajectory = dataset.trajectories[0]
-    gt_positions = trajectory["positions"][: steps + 1]
-    velocities = trajectory["velocities"][0].to(device)
+    start = min(max(start, 0), trajectory["positions"].size(0) - steps - 1)
+    gt_positions = trajectory["positions"][start : start + steps + 1]
+    gt_velocities = trajectory["velocities"][start : start + steps + 1]
+    velocities = gt_velocities[0].to(device)
     positions = gt_positions[0].to(device)
     particle_types = trajectory["particle_types"].to(device)
+    kinematic_id = int(data_cfg.get("kinematic_particle_id", 3))
+    kinematic_mask = particle_types == kinematic_id
     graph_builder = ParticleGraphBuilder(
         radius=dataset.radius, max_neighbors=lts_config.max_neighbors
     )
@@ -135,9 +140,17 @@ def _rollout_lts(model, data_cfg: dict, config: dict, device: torch.device, step
             with autocast_context(device, config):
                 outputs = model(graph)
                 acceleration = outputs["acceleration"] if isinstance(outputs, dict) else outputs
+            acceleration = _denormalize_lts_acceleration(acceleration.float(), dataset, data_cfg)
             positions, velocities = rollout_step(
-                positions.float(), velocities.float(), acceleration.float(), dataset.dt
+                positions.float(), velocities.float(), acceleration.float(), 1.0
             )
+            if torch.any(kinematic_mask):
+                positions = torch.where(
+                    kinematic_mask[:, None], gt_positions[len(predicted)].to(device), positions
+                )
+                velocities = torch.where(
+                    kinematic_mask[:, None], gt_velocities[len(predicted)].to(device), velocities
+                )
             if bounds is not None:
                 bounds_tensor = torch.tensor(bounds, dtype=positions.dtype, device=positions.device)
                 positions = torch.maximum(positions, bounds_tensor[:, 0])
@@ -145,6 +158,18 @@ def _rollout_lts(model, data_cfg: dict, config: dict, device: torch.device, step
             predicted.append(positions.detach().cpu())
 
     return gt_positions.cpu(), torch.stack(predicted), bounds
+
+
+def _denormalize_lts_acceleration(acceleration, dataset, data_cfg: dict):
+    if not bool(data_cfg.get("normalize_acceleration", True)):
+        return acceleration
+    mean = torch.tensor(
+        dataset.metadata["acc_mean"], dtype=acceleration.dtype, device=acceleration.device
+    )
+    std = torch.tensor(
+        dataset.metadata["acc_std"], dtype=acceleration.dtype, device=acceleration.device
+    ).clamp_min(1e-8)
+    return acceleration * std + mean
 
 
 def _build_rollout_model(config: dict):
