@@ -9,7 +9,7 @@ def acceleration_loss(predicted: Tensor, target: Tensor) -> Tensor:
     return F.mse_loss(predicted, target)
 
 
-def jepa_loss(prediction: Tensor, target: Tensor, normalize: bool = True) -> Tensor:
+def latent_prediction_loss(prediction: Tensor, target: Tensor, normalize: bool = True) -> Tensor:
     if normalize:
         prediction = F.normalize(prediction, dim=-1)
         target = F.normalize(target, dim=-1)
@@ -44,8 +44,10 @@ def sigreg_loss(latents: Tensor, sketch_dim: int = 64, eps: float = 1e-4) -> Ten
 
 
 def temporal_graph_jepa_loss(outputs: dict[str, Tensor], config: dict) -> dict[str, Tensor]:
-    prediction = jepa_loss(outputs["prediction"], outputs["target"].detach())
-    node_prediction = jepa_loss(outputs["node_prediction"], outputs["node_target"].detach())
+    prediction = latent_prediction_loss(outputs["prediction"], outputs["target"].detach())
+    node_prediction = latent_prediction_loss(
+        outputs["node_prediction"], outputs["node_target"].detach()
+    )
     sketch_dim = config.get("train", {}).get("sigreg_sketch_dim", 64)
     sigreg = (
         sigreg_loss(outputs["context"], sketch_dim=sketch_dim)
@@ -85,8 +87,8 @@ class HybridLoss(nn.Module):
 
     def forward(self, outputs: dict[str, Tensor], graph) -> dict[str, Tensor]:
         dyn = acceleration_loss(outputs["acceleration"], graph.y_acceleration)
-        rep = jepa_loss(outputs["prediction"], outputs["target"].detach())
-        node = jepa_loss(outputs["node_prediction"], outputs["node_target"].detach())
+        rep = latent_prediction_loss(outputs["prediction"], outputs["target"].detach())
+        node = latent_prediction_loss(outputs["node_prediction"], outputs["node_target"].detach())
         sigreg = (
             sigreg_loss(outputs["context"], sketch_dim=self.sigreg_sketch_dim)
             + sigreg_loss(outputs["target"], sketch_dim=self.sigreg_sketch_dim)

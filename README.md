@@ -2,53 +2,71 @@
 
 **Particle-JEPA: Self-Supervised Graph World Models for Particle Physics**
 
-Particle-JEPA is a compact research project for learning graph-native world models on particle simulations. It represents physical systems as dynamic graphs and trains Graph Neural Networks with a JEPA-style latent future prediction objective.
+Particle-JEPA is a research-oriented project for learning graph world models on particle simulations. A physical state is represented as a dynamic particle graph, and the model learns to predict the next graph state in latent space.
 
-Particle-JEPA explores whether JEPA-style latent future prediction can improve graph-based learned physical simulators. Instead of only predicting the next particle positions, the model learns to predict the representation of a future particle graph, enabling future retrieval, latent rollout analysis, and potentially more robust long-horizon world modeling.
+The project is not an LLM project and not a generic graph benchmark. It is about modeling the evolution of a physical environment represented as graphs.
 
-The central question:
+## Core Idea
 
-> Can a JEPA-style latent future prediction objective improve learned graph-based physical world models, especially in representation quality, future retrieval, and long-horizon rollout behavior?
+Given the current particle graph `G_t`, predict the latent representation of the next particle graph `G_t+1`.
 
-This repository is initialized as a research-grade starter: runnable toy data, graph construction, baseline GNS-style dynamics, Particle-JEPA latent prediction, hybrid training hooks, evaluation utilities, and visualization entry points.
-
-## Why This Project
-
-Particle systems are naturally graph structured:
-
-- **Nodes** are particles.
-- **Edges** are nearby physical interactions.
-- **Node features** include position, velocity, particle type, material type, and boundary flags.
-- **Edge features** include relative displacement, relative velocity, and distance.
-
-Instead of predicting only the next particle position, Particle-JEPA learns to predict a future graph representation in latent space:
+The current state already contains positions, velocities, particle type, material flags, and boundary information, so it is rich enough to serve as the context state.
 
 ```text
-Particle rollout
-      ↓
-Dynamic radius graph
-      ↓
-GNN context encoder ───────┐
-                           ↓
-                     JEPA predictor ──→ predicted future embedding
-                           ↑
-Future graph ─→ GNN target encoder ───→ target future embedding
+current particle state
+        |
+dynamic radius graph G_t
+        |
+GNN context encoder
+        |
+node + graph latent predictor
+        |
+predicted next-state latent
+
+next particle state G_t+1
+        |
+same GNN encoder
+        |
+target next-state latent
 ```
+
+The Particle-JEPA loss is intentionally simple:
+
+```text
+prediction loss + SIGReg anti-collapse loss
+```
+
+SIGReg is used as the clean anti-collapse regularizer. There is no EMA target encoder in the default design.
+
+## Model Comparisons
+
+The intended comparison set is:
+
+1. **Particle-JEPA**: graph-native JEPA adapted to particle dynamics, with SIGReg.
+2. **GNS baseline**: Graph Network Simulator-style learned physical simulator.
+3. **Hybrid GNS + JEPA**: dynamics prediction plus the Particle-JEPA auxiliary objective.
+
+## Graph Representation
+
+- Nodes are particles.
+- Edges are nearby interactions from a dynamic radius graph.
+- Node features include position, velocity, particle type, material type, and boundary flags.
+- Edge features include relative position, relative velocity, distance, and normalized distance.
 
 ## Current Capabilities
 
-- Toy particle dataset with simple spring-like dynamics for smoke tests and demos.
-- Dynamic radius graph construction with PyTorch Geometric `Data` objects.
-- Hydra experiment configuration.
-- Weights & Biases experiment tracking.
-- GNS-style message-passing simulator baseline.
-- Particle-JEPA encoder and latent predictor.
-- Hybrid model that combines acceleration prediction with latent future prediction.
-- Losses for dynamics and JEPA-style representation learning.
-- Rollout, retrieval, and latent trajectory metrics.
-- Matplotlib visualization utilities for particles and latent paths.
-- CLI scripts for training, evaluation, rollout, preprocessing, and visualization.
-- Pytest coverage for graph construction, toy data, models, and losses.
+- Toy 2D particle rollout generator.
+- Dynamic particle graph construction with PyTorch Geometric.
+- Particle-JEPA with node-level and graph-level latent next-state prediction.
+- SIGReg anti-collapse regularization.
+- GNS-style baseline.
+- Hybrid GNS + JEPA model.
+- Hydra configuration.
+- Weights & Biases tracking support.
+- FP16 autocast on CUDA.
+- `torch.compile(..., mode="reduce-overhead")` support.
+- Rollout strip visualization.
+- Latent future retrieval visualization with chance and random baselines.
 
 ## Installation
 
@@ -74,13 +92,13 @@ Run tests:
 pytest
 ```
 
-Train the JEPA toy model:
+Train Particle-JEPA:
 
 ```bash
 python scripts/train.py
 ```
 
-Train the baseline GNS-style model:
+Train the GNS-style baseline:
 
 ```bash
 python scripts/train.py --config-name gns
@@ -95,26 +113,26 @@ python scripts/train.py --config-name hybrid
 Use Hydra overrides:
 
 ```bash
-python scripts/train.py data.num_particles=128 data.horizon=8 training.epochs=20
+python scripts/train.py data.num_particles=128 data.horizon=1 training.epochs=20
 ```
 
-Enable Weights & Biases tracking:
+Enable Weights & Biases:
 
 ```bash
 wandb login
 python scripts/train.py tracking.enabled=true
 ```
 
-Create a toy rollout visualization:
+Export a rollout strip from a GNS or hybrid checkpoint:
 
 ```bash
-python scripts/visualize.py --run latest
+python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 32
 ```
 
-Export a latent future retrieval panel from a Particle-JEPA checkpoint:
+Export a Particle-JEPA retrieval panel:
 
 ```bash
-python scripts/retrieve.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --top-k 3
+python scripts/retrieve.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --top-k 5
 ```
 
 Training writes run artifacts to:
@@ -129,73 +147,34 @@ runs/
     └── visualizations/
 ```
 
-## Repository Layout
+## Evaluation
 
-```text
-configs/                  YAML experiment configuration
-data/                     raw and processed dataset locations
-notebooks/                exploration notebooks
-scripts/                  command-line entry points
-src/particle_jepa/        package source code
-tests/                    smoke and unit tests
-```
+Particle-JEPA is evaluated with:
 
-## Model Families
+- latent next-state retrieval top-k accuracy,
+- chance retrieval baseline,
+- random latent retrieval baseline,
+- prediction-target cosine,
+- latent standard deviation diagnostics,
+- latent trajectory visualizations.
 
-### GNS Baseline
+GNS and hybrid models are evaluated with:
 
-A compact Graph Network Simulator-style model predicts particle acceleration from the current graph. It supports next-step prediction and autoregressive rollouts.
-
-### Particle-JEPA
-
-A graph encoder embeds the current particle graph. A target encoder embeds a future particle graph. A predictor maps the context embedding toward the future embedding using a latent regression objective.
-
-### Hybrid GNS + JEPA
-
-The hybrid model shares graph representations across physical prediction and latent future prediction, enabling combined supervised dynamics and self-supervised representation learning.
-
-The planned paper angle:
-
-> Can JEPA-style latent future prediction provide a useful auxiliary objective for graph neural particle simulators?
-
-Model variants:
-
-```text
-1. GNS baseline
-2. Particle-JEPA
-3. Hybrid GNS + JEPA
-```
-
-## Evaluation Ideas
-
-- Next-step position and velocity prediction error.
-- Long-horizon rollout RMSE.
-- Rollout Chamfer distance.
-- Latent future retrieval accuracy.
-- Latent prediction MSE and cosine similarity.
-- Latent trajectory alignment.
-- Qualitative side-by-side rollout videos.
-- Latent future retrieval panels.
+- one-step prediction error,
+- rollout position error,
+- rollout visual comparison,
+- rollout Chamfer distance.
 
 ## Dataset Roadmap
 
-The initial implementation uses a toy particle simulator. Extension points are included for DeepMind Learning-to-Simulate datasets in `src/particle_jepa/data/lts_dataset.py`.
+The repository currently uses a toy particle simulator. DeepMind Learning-to-Simulate integration is intentionally left as the next dataset milestone.
 
-Expected future integrations:
+Planned dataset work:
 
-- TFRecord conversion or exported NumPy trajectories.
-- Material and boundary metadata parsing.
+- TFRecord or exported-array conversion.
 - Dataset-specific normalization.
+- Material and boundary metadata parsing.
 - Multi-material rollout evaluation.
-
-## Roadmap
-
-- Add full DeepMind Learning-to-Simulate conversion and normalization.
-- Add EMA target encoder updates for Particle-JEPA.
-- Expand rollout evaluation with dataset-specific boundary handling.
-- Add retrieval visualizations from trained checkpoints.
-- Add optional experiment tracking with wandb or TensorBoard.
-- Produce polished GIF/MP4 rollout comparisons for portfolio use.
 
 ## References
 

@@ -12,7 +12,7 @@ data:
   dimension: 2
   dt: 0.01
   graph_radius: 0.15
-  horizon: 5
+  horizon: 1
   batch_size: 8
   num_workers: 0
 
