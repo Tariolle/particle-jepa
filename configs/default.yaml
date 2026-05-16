@@ -1,0 +1,33 @@
+seed: 7
+device: auto
+
+data:
+  name: toy_particles
+  num_trajectories: 64
+  num_particles: 48
+  sequence_length: 24
+  dt: 0.05
+  future_offset: 4
+  radius: 0.25
+  noise_std: 0.002
+
+model:
+  node_dim: 7
+  edge_dim: 5
+  hidden_dim: 128
+  latent_dim: 128
+  message_passing_steps: 4
+  dropout: 0.0
+
+train:
+  batch_size: 8
+  epochs: 5
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  jepa_loss_weight: 1.0
+  dynamics_loss_weight: 1.0
+  grad_clip_norm: 1.0
+
+paths:
+  output_dir: outputs
+  checkpoint_dir: checkpoints

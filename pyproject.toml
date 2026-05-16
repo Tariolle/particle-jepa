@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "particle-jepa"
+version = "0.1.0"
+description = "Self-supervised graph world models for particle physics."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Particle-JEPA contributors"}]
+dependencies = [
+    "torch>=2.2",
+    "torch-geometric>=2.5",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "matplotlib>=3.8",
+    "tqdm>=4.66",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4", "black>=24.0", "pre-commit>=3.7"]
+tracking = ["wandb", "tensorboard", "torchmetrics"]
+visual = ["plotly", "moviepy"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

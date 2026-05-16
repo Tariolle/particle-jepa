@@ -1,0 +1,6 @@
+batch_size: 2
+epochs: 1
+learning_rate: 0.001
+weight_decay: 0.0
+grad_clip_norm: 1.0
+log_every: 1
