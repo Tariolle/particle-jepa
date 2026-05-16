@@ -47,6 +47,7 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "mlp_layers": model.get("mlp_layers", 2),
                 "dropout": model.get("dropout", 0.0),
                 "max_horizon": model.get("max_horizon", 32),
+                "target_ema_decay": model.get("target_ema_decay", 0.99),
             },
             "train": {
                 "batch_size": data.get("batch_size", 8),

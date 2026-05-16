@@ -16,7 +16,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from particle_jepa.data.dataset import build_dataset
-from particle_jepa.evaluation.retrieval import nearest_future_indices, retrieval_accuracy
+from particle_jepa.evaluation.retrieval import (
+    chance_retrieval_accuracy,
+    nearest_future_indices,
+    random_latent_retrieval_accuracy,
+    retrieval_accuracy,
+)
 from particle_jepa.models import ParticleJEPA
 from particle_jepa.utils.checkpointing import load_checkpoint
 from particle_jepa.utils.perf import autocast_context, compile_model, strip_compiled_state_dict
@@ -30,6 +35,7 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--max-samples", type=int, default=64)
     parser.add_argument("--query-index", type=int, default=0)
+    parser.add_argument("--random-trials", type=int, default=64)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
@@ -58,8 +64,25 @@ def main() -> None:
     metrics = {
         "top1_accuracy": retrieval_accuracy(predictions, targets, top_k=1).item(),
         f"top{top_k}_accuracy": retrieval_accuracy(predictions, targets, top_k=top_k).item(),
+        "chance_top1_accuracy": chance_retrieval_accuracy(targets.size(0), top_k=1),
+        f"chance_top{top_k}_accuracy": chance_retrieval_accuracy(targets.size(0), top_k=top_k),
+        "random_top1_accuracy": random_latent_retrieval_accuracy(
+            targets, top_k=1, trials=args.random_trials
+        ).item(),
+        f"random_top{top_k}_accuracy": random_latent_retrieval_accuracy(
+            targets, top_k=top_k, trials=args.random_trials
+        ).item(),
         "num_samples": int(targets.size(0)),
+        "prediction_target_cosine": F.cosine_similarity(predictions, targets, dim=-1).mean().item(),
+        "prediction_latent_std": predictions.std(dim=0).mean().item(),
+        "target_latent_std": targets.std(dim=0).mean().item(),
     }
+    metrics["top1_lift_vs_chance"] = metrics["top1_accuracy"] / max(
+        metrics["chance_top1_accuracy"], 1e-12
+    )
+    metrics[f"top{top_k}_lift_vs_chance"] = metrics[f"top{top_k}_accuracy"] / max(
+        metrics[f"chance_top{top_k}_accuracy"], 1e-12
+    )
 
     query = min(max(args.query_index, 0), targets.size(0) - 1)
     retrieved_positions = [future_positions[idx] for idx in indices[query].tolist()]

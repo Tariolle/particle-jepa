@@ -54,6 +54,7 @@ def train_jepa(
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
             scaler.step(optimizer)
             scaler.update()
+            _unwrap(model).update_target_encoder(model_cfg.get("target_ema_decay", 0.99))
             running += loss.item()
         train_loss = running / max(len(loader), 1)
         val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
@@ -64,6 +65,10 @@ def train_jepa(
             tracker.log(row, step=epoch + 1)
         print(f"epoch={epoch + 1} loss={train_loss:.6f} val_loss={val_loss}")
     return model
+
+
+def _unwrap(model):
+    return getattr(model, "_orig_mod", model)
 
 
 def _evaluate(model: ParticleJEPA, loader, device: torch.device) -> float:

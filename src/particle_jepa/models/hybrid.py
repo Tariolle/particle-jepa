@@ -43,6 +43,8 @@ class HybridGNSJEPA(nn.Module):
             dropout=dropout,
             mlp_layers=mlp_layers,
         )
+        for parameter in self.target_encoder.parameters():
+            parameter.requires_grad = False
         self.dynamics_head = AccelerationDecoder(latent_dim, hidden_dim, mlp_layers=mlp_layers)
         self.horizon_embedding = nn.Embedding(max_horizon + 1, latent_dim)
         self.predictor = make_mlp(latent_dim * 2, hidden_dim, latent_dim, dropout, mlp_layers)
@@ -72,6 +74,13 @@ class HybridGNSJEPA(nn.Module):
         if batch is None:
             batch = torch.zeros(node_latents.size(0), dtype=torch.long, device=node_latents.device)
         return global_mean_pool(node_latents, batch)
+
+    @torch.no_grad()
+    def update_target_encoder(self, decay: float = 0.99) -> None:
+        for target_param, online_param in zip(
+            self.target_encoder.parameters(), self.encoder.parameters(), strict=True
+        ):
+            target_param.data.mul_(decay).add_(online_param.data, alpha=1.0 - decay)
 
 
 def _resolve_horizon(

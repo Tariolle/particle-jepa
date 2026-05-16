@@ -35,6 +35,8 @@ class ParticleJEPA(nn.Module):
             mlp_layers=mlp_layers,
         )
         self.target_encoder = copy.deepcopy(self.context_encoder)
+        for parameter in self.target_encoder.parameters():
+            parameter.requires_grad = False
         self.horizon_embedding = nn.Embedding(max_horizon + 1, latent_dim)
         self.predictor = make_mlp(latent_dim * 2, hidden_dim, latent_dim, dropout, mlp_layers)
 
@@ -54,6 +56,13 @@ class ParticleJEPA(nn.Module):
             "target": target_latent.detach(),
             "context": context_latent,
         }
+
+    @torch.no_grad()
+    def update_target_encoder(self, decay: float = 0.99) -> None:
+        for target_param, context_param in zip(
+            self.target_encoder.parameters(), self.context_encoder.parameters(), strict=True
+        ):
+            target_param.data.mul_(decay).add_(context_param.data, alpha=1.0 - decay)
 
 
 def _resolve_horizon(
