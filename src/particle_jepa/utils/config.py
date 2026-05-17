@@ -48,6 +48,7 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "dropout": model.get("dropout", 0.0),
                 "max_horizon": model.get("max_horizon", 32),
                 "latent_predictor_steps": model.get("latent_predictor_steps", 2),
+                "region_grid_size": model.get("region_grid_size", 4),
             },
             "train": {
                 "batch_size": data.get("batch_size", 8),
@@ -72,6 +73,7 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "jepa_loss_weight": loss.get("jepa_loss_weight", 0.2),
                 "prediction_weight": loss.get("prediction_weight", 1.0),
                 "node_prediction_weight": loss.get("node_prediction_weight", 1.0),
+                "region_prediction_weight": loss.get("region_prediction_weight", 1.0),
                 "sigreg_weight": loss.get("sigreg_weight", 0.05),
                 "sigreg_sketch_dim": loss.get("sigreg_sketch_dim", 64),
             },

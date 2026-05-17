@@ -1,128 +1,48 @@
 # Experiment Notes
 
-## 2026-05-16: Latent Message-Passing Particle-JEPA
+## Current Focus
 
-Configuration:
+Particle-JEPA is now the primary research object. The project goal is to test
+whether a JEPA-style graph latent dynamics model can learn useful particle
+world representations.
 
-```text
-data.num_train_trajectories=16
-data.num_val_trajectories=4
-data.trajectory_length=12
-data.num_particles=16
-data.horizon=1
-training.epochs=8
-training.compile=true
-training.compile_mode=reduce-overhead
-model.hidden_dim=64
-model.latent_dim=64
-model.message_passing_steps=2
-model.latent_predictor_steps=2
-loss.sigreg_weight=0.05
-```
+The GNS model remains as the supervised learned-simulation baseline. It is not
+the project center.
 
-Retrieval evaluation:
+## What Counts As Evidence
 
-```json
-{
-  "top1_accuracy": 0.0454545468,
-  "top5_accuracy": 0.3106060624,
-  "chance_top1_accuracy": 0.0075757576,
-  "chance_top5_accuracy": 0.0378787879,
-  "random_top1_accuracy": 0.0069839018,
-  "random_top5_accuracy": 0.0334990546,
-  "num_samples": 132,
-  "prediction_target_cosine": 0.9718736410,
-  "prediction_latent_std": 0.0978704616,
-  "target_latent_std": 0.0995207727,
-  "top1_lift_vs_chance": 6.0,
-  "top5_lift_vs_chance": 8.2
-}
-```
+Retrieval alone is not enough. A nearest-neighbor panel can look bad even when
+scalar retrieval metrics beat chance, and it can look plausible for shallow
+reasons.
 
-Interpretation:
+The stronger evaluation path is:
 
-- The latent graph predictor gives a clear retrieval signal above chance.
-- Latent standard deviations are not collapsed.
-- This supports the Particle-JEPA representation-learning idea on toy data.
-- It does not yet prove the world-modeling claim. The next required result is whether **Hybrid GNS + JEPA** improves rollout metrics over **GNS** on the same split.
+1. Train Particle-JEPA with latent prediction plus SIGReg only.
+2. Freeze the JEPA encoder and predictor.
+3. Train a lightweight probe from predicted future node latents to particle
+   acceleration or next state.
+4. Evaluate one-step probe error, rollout videos, and contact behavior.
 
-## 2026-05-16: First Toy Comparison
+No decoded-state loss belongs in JEPA training. The probe is only an evaluation
+instrument.
 
-Shared training scale:
+## Baseline Reference
+
+The corrected WaterRamps GNS baseline uses official-style inputs:
+
+- six-frame position history,
+- normalized velocity history,
+- clipped boundary-distance features,
+- one-hot particle types,
+- normalized relative displacement edges,
+- dynamic-particle noise,
+- kinematic-particle handling.
+
+Recent GNS WaterRamps contact rollout:
 
 ```text
-data.num_train_trajectories=16
-data.num_val_trajectories=4
-data.trajectory_length=12
-data.num_particles=16
-data.horizon=1
-training.epochs=8
-training.compile=true
-training.compile_mode=reduce-overhead
-model.hidden_dim=64
-model.message_passing_steps=2
+train loss: 0.5530 -> 0.1161
+contact rollout error: 0.0410
 ```
 
-### Particle-JEPA
-
-Retrieval:
-
-```json
-{
-  "top1_accuracy": 0.0454545468,
-  "top5_accuracy": 0.3106060624,
-  "chance_top1_accuracy": 0.0075757576,
-  "chance_top5_accuracy": 0.0378787879,
-  "random_top1_accuracy": 0.0069839018,
-  "random_top5_accuracy": 0.0334990546,
-  "top1_lift_vs_chance": 6.0,
-  "top5_lift_vs_chance": 8.2,
-  "prediction_latent_std": 0.0978704616,
-  "target_latent_std": 0.0995207727
-}
-```
-
-Interpretation: pure Particle-JEPA works as a representation learner on the toy environment. It retrieves the correct next-state neighborhood well above chance and does not collapse.
-
-### GNS Baseline
-
-Rollout:
-
-```json
-{
-  "rollout_position_error": 0.0005
-}
-```
-
-Interpretation: the supervised GNS baseline is already very strong on this simple toy rollout.
-
-### Hybrid GNS + JEPA
-
-Rollout:
-
-```json
-{
-  "rollout_position_error": 0.0006
-}
-```
-
-Retrieval:
-
-```json
-{
-  "top1_accuracy": 0.0303030312,
-  "top5_accuracy": 0.1590909064,
-  "chance_top1_accuracy": 0.0075757576,
-  "chance_top5_accuracy": 0.0378787879,
-  "top1_lift_vs_chance": 4.0,
-  "top5_lift_vs_chance": 4.2,
-  "prediction_latent_std": 0.0320658162,
-  "target_latent_std": 0.0178259797
-}
-```
-
-Interpretation: the hybrid keeps a retrieval signal above chance, but it does not beat GNS rollout yet. On this toy setting, pure Particle-JEPA is promising as a latent model; the hybrid simulator claim is not yet established.
-
-### Decision
-
-We can move toward better visual evaluation for pure Particle-JEPA retrieval. We should not yet claim Hybrid improves GNS. Before video comparisons become a project centerpiece, run a slightly more serious comparison with multiple seeds and longer rollout horizons.
+This is the reference bar for later probe-based Particle-JEPA evaluation.

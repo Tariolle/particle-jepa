@@ -16,7 +16,7 @@ from particle_jepa.data.lts_dataset import LearningToSimulateConfig, LearningToS
 from particle_jepa.data.graph_builder import ParticleGraphBuilder
 from particle_jepa.data.toy_dataset import ToyParticleConfig, generate_toy_rollouts
 from particle_jepa.evaluation.rollout_eval import rollout_error, rollout_step
-from particle_jepa.models import GraphNetworkSimulator, HybridGNSJEPA
+from particle_jepa.models import GraphNetworkSimulator
 from particle_jepa.utils.checkpointing import load_checkpoint
 from particle_jepa.utils.perf import autocast_context, compile_model, strip_compiled_state_dict
 from particle_jepa.visualization.animations import (
@@ -27,7 +27,7 @@ from particle_jepa.visualization.animations import (
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export a predicted-vs-ground-truth toy rollout.")
-    parser.add_argument("--checkpoint", default=None, help="Path to a GNS or hybrid checkpoint.")
+    parser.add_argument("--checkpoint", default=None, help="Path to a GNS checkpoint.")
     parser.add_argument("--output", default=None)
     parser.add_argument("--steps", type=int, default=16)
     parser.add_argument("--start", type=int, default=0)
@@ -192,25 +192,16 @@ def _build_rollout_model(config: dict):
         "dropout": model_cfg.get("dropout", 0.0),
         "mlp_layers": model_cfg.get("mlp_layers", 2),
     }
-    if experiment == "hybrid":
-        return HybridGNSJEPA(
-            **kwargs,
-            latent_dim=model_cfg.get("latent_dim", 128),
-            max_horizon=model_cfg.get("max_horizon", 32),
-            latent_predictor_steps=model_cfg.get("latent_predictor_steps", 2),
-        )
     if experiment == "gns":
         return GraphNetworkSimulator(**kwargs)
-    msg = f"Rollout requires a GNS or hybrid checkpoint, got '{experiment}'."
+    msg = f"Rollout requires a GNS checkpoint, got '{experiment}'."
     raise ValueError(msg)
 
 
 def _latest_checkpoint() -> Path:
-    checkpoints = sorted(Path("runs").glob("*_gns/checkpoints/last.pt")) + sorted(
-        Path("runs").glob("*_hybrid/checkpoints/last.pt")
-    )
+    checkpoints = sorted(Path("runs").glob("*_gns/checkpoints/last.pt"))
     if not checkpoints:
-        msg = "No GNS or hybrid checkpoint found under runs/*/checkpoints/last.pt."
+        msg = "No GNS checkpoint found under runs/*_gns/checkpoints/last.pt."
         raise FileNotFoundError(msg)
     return checkpoints[-1]
 

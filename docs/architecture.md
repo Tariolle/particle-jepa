@@ -12,7 +12,6 @@ The project should compare:
 
 1. **Particle-JEPA**: graph-native latent next-state prediction with SIGReg.
 2. **GNS baseline**: official Graph Network Simulator-style dynamics prediction.
-3. **Hybrid GNS + JEPA**: supervised dynamics prediction plus the Particle-JEPA auxiliary objective.
 
 ## Encoder Options
 
@@ -137,29 +136,30 @@ G_t+1
 Particle-JEPA uses:
 
 ```text
-graph latent prediction loss
-+ node latent prediction loss
+node latent prediction loss
++ spatial region latent prediction loss
++ graph latent prediction loss
 + SIGReg anti-collapse loss
 ```
 
-The graph loss supports retrieval and trajectory metrics. The node loss keeps the objective graph-native and particle-aware. SIGReg prevents low-variance latent collapse.
+The node loss keeps the objective particle-aware. The spatial region loss avoids the destructive "everything averages together" failure mode of pure mean pooling. The graph loss remains a coarse global alignment diagnostic. SIGReg prevents low-variance latent collapse without an EMA target encoder.
+
+There is no decoded-state loss in the Particle-JEPA objective. Decoders or probes are trained only after the JEPA is frozen, as an evaluation tool.
 
 ## How We Know The Idea Is Working
 
 The idea is not validated by low training loss alone. It becomes grounded when:
 
-- retrieval top-k accuracy beats chance and random-latent baselines,
+- frozen probes can decode useful future particle states from predicted latents,
+- probe rollouts show plausible gravity, contact, and long-horizon behavior,
+- retrieval top-k accuracy beats chance and random-latent baselines as a secondary diagnostic,
 - latent standard deviation is not near zero,
-- predicted-vs-target latent cosine is high but not due to collapse,
-- hybrid GNS + JEPA improves rollout metrics over GNS alone,
-- video rollouts show lower long-horizon drift or better stability.
+- predicted-vs-target latent cosine is high but not due to collapse.
 
-The threshold for moving beyond toy image panels into video comparisons is:
+The threshold for comparing against GNS is:
 
 ```text
-Particle-JEPA retrieval lift > 1 over chance
-and
-Hybrid rollout error <= GNS rollout error on the same split
+Frozen Particle-JEPA probe rollout is physically plausible on WaterRamps
 ```
 
-Once both are true on toy data, video comparison becomes meaningful rather than decorative.
+GNS remains the reference baseline, not the project center.

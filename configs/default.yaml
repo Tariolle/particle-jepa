@@ -18,7 +18,8 @@ model:
   latent_dim: 128
   message_passing_steps: 4
   dropout: 0.0
-  latent_predictor_steps: 2
+  latent_predictor_steps: 5
+  region_grid_size: 4
 
 train:
   batch_size: 8
@@ -28,6 +29,7 @@ train:
   jepa_loss_weight: 1.0
   dynamics_loss_weight: 1.0
   node_prediction_weight: 1.0
+  region_prediction_weight: 1.0
   sigreg_weight: 0.05
   sigreg_sketch_dim: 64
   grad_clip_norm: 1.0

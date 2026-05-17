@@ -18,7 +18,6 @@ if str(SRC) not in sys.path:
 
 from particle_jepa.data.dataset import build_dataset
 from particle_jepa.training.train_gns import train_gns
-from particle_jepa.training.train_hybrid import train_hybrid
 from particle_jepa.training.train_jepa import train_jepa
 from particle_jepa.utils.checkpointing import save_checkpoint
 from particle_jepa.utils.config import load_config, normalize_experiment_config
@@ -50,7 +49,7 @@ def hydra_main(cfg: DictConfig) -> None:
 def legacy_main() -> None:
     parser = argparse.ArgumentParser(description="Train Particle-JEPA experiments.")
     parser.add_argument("--config", default="configs/default.yaml")
-    parser.add_argument("--experiment", choices=["gns", "jepa", "hybrid"], default=None)
+    parser.add_argument("--experiment", choices=["gns", "jepa"], default=None)
     parser.add_argument("--checkpoint", default=None)
     args = parser.parse_args()
 
@@ -93,16 +92,7 @@ def run_training(
                 run_dir=run_dir,
                 tracker=tracker,
             )
-        elif experiment == "hybrid":
-            model = train_hybrid(
-                train_dataset,
-                config,
-                device,
-                val_dataset=val_dataset,
-                run_dir=run_dir,
-                tracker=tracker,
-            )
-        else:
+        elif experiment == "jepa":
             model = train_jepa(
                 train_dataset,
                 config,
@@ -111,6 +101,9 @@ def run_training(
                 run_dir=run_dir,
                 tracker=tracker,
             )
+        else:
+            msg = f"Unsupported experiment '{experiment}'. Expected 'jepa' or 'gns'."
+            raise ValueError(msg)
     finally:
         tracker.finish()
 

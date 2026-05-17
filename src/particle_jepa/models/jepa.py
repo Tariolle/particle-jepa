@@ -22,8 +22,10 @@ class ParticleJEPA(nn.Module):
         mlp_layers: int = 2,
         max_horizon: int = 32,
         latent_predictor_steps: int = 2,
+        region_grid_size: int = 4,
     ) -> None:
         super().__init__()
+        self.region_grid_size = region_grid_size
         self.context_encoder = ParticleGraphEncoder(
             node_dim=node_dim,
             edge_dim=edge_dim,
@@ -47,8 +49,12 @@ class ParticleJEPA(nn.Module):
     def forward(
         self, context_graph: Data | Batch, future_graph: Data | Batch, horizon: Tensor | None = None
     ) -> dict[str, Tensor]:
-        context_node_latents, context_latent = self.context_encoder(context_graph)
-        target_node_latents, target_latent = self.target_encoder(future_graph)
+        context_node_latents, _ = self.context_encoder(context_graph, pool=False)
+        target_node_latents, _ = self.target_encoder(future_graph, pool=False)
+        context_batch = _batch_vector(context_graph, context_node_latents)
+        batch_size = _num_graphs(context_graph)
+        context_latent = _mean_pool(context_node_latents, context_batch, batch_size)
+        target_latent = _mean_pool(target_node_latents, context_batch, batch_size)
         horizon = _resolve_horizon(
             context_graph, context_latent.size(0), context_latent.device, horizon
         )
@@ -58,6 +64,20 @@ class ParticleJEPA(nn.Module):
             context_graph,
             horizon_latent,
         )
+        region_prediction = spatial_region_pool(
+            node_prediction,
+            context_graph.pos,
+            context_batch,
+            self.region_grid_size,
+            batch_size,
+        )
+        region_target = spatial_region_pool(
+            target_node_latents,
+            context_graph.pos,
+            context_batch,
+            self.region_grid_size,
+            batch_size,
+        )
         return {
             "prediction": prediction,
             "target": target_latent,
@@ -65,6 +85,9 @@ class ParticleJEPA(nn.Module):
             "node_prediction": node_prediction,
             "node_target": target_node_latents,
             "node_context": context_node_latents,
+            "region_prediction": region_prediction,
+            "region_target": region_target,
+            "node_mask": getattr(context_graph, "dynamic_mask", None),
         }
 
 
@@ -79,3 +102,46 @@ def _resolve_horizon(
     if horizon.numel() == 1 and batch_size > 1:
         horizon = horizon.expand(batch_size)
     return horizon.clamp_min(0)
+
+
+def _batch_vector(graph: Data | Batch, node_latents: Tensor) -> Tensor:
+    batch = getattr(graph, "batch", None)
+    if batch is None:
+        return torch.zeros(node_latents.size(0), dtype=torch.long, device=node_latents.device)
+    return batch
+
+
+def _num_graphs(graph: Data | Batch) -> int:
+    return int(getattr(graph, "num_graphs", 1))
+
+
+def _mean_pool(values: Tensor, batch: Tensor, batch_size: int) -> Tensor:
+    pooled = values.new_zeros((batch_size, values.size(-1)))
+    counts = values.new_zeros((batch_size, 1))
+    pooled.index_add_(0, batch, values)
+    counts.index_add_(0, batch, torch.ones((values.size(0), 1), device=values.device))
+    return pooled / counts.clamp_min(1.0)
+
+
+def spatial_region_pool(
+    values: Tensor,
+    positions: Tensor,
+    batch: Tensor,
+    grid_size: int,
+    batch_size: int,
+) -> Tensor:
+    """Pool node latents into fixed spatial bins using current particle positions."""
+    if positions.size(-1) < 2:
+        msg = "spatial_region_pool expects at least 2D particle positions."
+        raise ValueError(msg)
+    num_regions = grid_size * grid_size
+    xy = positions[:, :2].clamp(0.0, 1.0 - 1e-6)
+    bins = (xy * grid_size).long().clamp(0, grid_size - 1)
+    region = bins[:, 1] * grid_size + bins[:, 0]
+    flat_region = batch * num_regions + region
+    pooled = values.new_zeros((batch_size * num_regions, values.size(-1)))
+    counts = values.new_zeros((batch_size * num_regions, 1))
+    pooled.index_add_(0, flat_region, values)
+    counts.index_add_(0, flat_region, torch.ones((values.size(0), 1), device=values.device))
+    pooled = pooled / counts.clamp_min(1.0)
+    return pooled.view(batch_size, num_regions, values.size(-1))

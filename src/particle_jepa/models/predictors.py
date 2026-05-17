@@ -3,7 +3,6 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 from torch_geometric.data import Batch, Data
-from torch_geometric.nn import global_mean_pool
 
 from particle_jepa.models.message_passing import GraphProcessor, make_mlp
 
@@ -38,7 +37,9 @@ class LatentGraphPredictor(nn.Module):
         edge_attr = self.edge_encoder(graph.edge_attr)
         x, _ = self.processor(x, graph.edge_index, edge_attr)
         node_prediction = self.node_output(x)
-        graph_prediction = global_mean_pool(node_prediction, node_batch)
+        graph_prediction = _mean_pool(
+            node_prediction, node_batch, int(getattr(graph, "num_graphs", 1))
+        )
         return node_prediction, graph_prediction
 
 
@@ -47,3 +48,11 @@ def _node_batch(graph: Data | Batch, node_latents: Tensor) -> Tensor:
     if batch is None:
         return torch.zeros(node_latents.size(0), dtype=torch.long, device=node_latents.device)
     return batch
+
+
+def _mean_pool(values: Tensor, batch: Tensor, batch_size: int) -> Tensor:
+    pooled = values.new_zeros((batch_size, values.size(-1)))
+    counts = values.new_zeros((batch_size, 1))
+    pooled.index_add_(0, batch, values)
+    counts.index_add_(0, batch, torch.ones((values.size(0), 1), device=values.device))
+    return pooled / counts.clamp_min(1.0)

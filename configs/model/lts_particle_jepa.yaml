@@ -38,12 +38,14 @@ model:
   normalize_latents: true
   dropout: 0.0
   max_horizon: 32
-  latent_predictor_steps: 2
+  latent_predictor_steps: 5
+  region_grid_size: 4
 
 loss:
   type: prediction_sigreg
   prediction_weight: 1.0
   node_prediction_weight: 1.0
+  region_prediction_weight: 1.0
   sigreg_weight: 0.05
   sigreg_sketch_dim: 64
 

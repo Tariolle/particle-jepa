@@ -22,7 +22,7 @@ from particle_jepa.evaluation.retrieval import (
     random_latent_retrieval_accuracy,
     retrieval_accuracy,
 )
-from particle_jepa.models import HybridGNSJEPA, ParticleJEPA
+from particle_jepa.models import ParticleJEPA
 from particle_jepa.utils.checkpointing import load_checkpoint
 from particle_jepa.utils.perf import autocast_context, compile_model, strip_compiled_state_dict
 from particle_jepa.visualization.particles import plot_retrieval_panel
@@ -147,10 +147,8 @@ def _build_retrieval_model(config: dict):
         "mlp_layers": model_cfg.get("mlp_layers", 2),
         "max_horizon": model_cfg.get("max_horizon", 32),
         "latent_predictor_steps": model_cfg.get("latent_predictor_steps", 2),
+        "region_grid_size": model_cfg.get("region_grid_size", 4),
     }
-    experiment = config.get("experiment", model_cfg.get("type", "particle_jepa"))
-    if experiment == "hybrid":
-        return HybridGNSJEPA(**kwargs)
     return ParticleJEPA(
         **kwargs,
     )

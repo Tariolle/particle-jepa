@@ -3,7 +3,7 @@ from __future__ import annotations
 from torch_geometric.loader import DataLoader
 
 from particle_jepa.data.toy_dataset import ToyParticleConfig, ToyParticleDataset
-from particle_jepa.models import GraphNetworkSimulator, HybridGNSJEPA, ParticleJEPA
+from particle_jepa.models import GraphNetworkSimulator, ParticleJEPA
 
 
 def _batch():
@@ -27,11 +27,5 @@ def test_jepa_forward_shape() -> None:
     assert outputs["prediction"].shape == (2, 24)
     assert outputs["target"].shape == (2, 24)
     assert outputs["node_prediction"].shape == outputs["node_target"].shape
-
-
-def test_hybrid_forward_shape() -> None:
-    context, future = _batch()
-    model = HybridGNSJEPA(hidden_dim=32, latent_dim=24, message_passing_steps=2)
-    outputs = model(context, future)
-    assert outputs["acceleration"].shape == context.y_acceleration.shape
-    assert outputs["prediction"].shape == outputs["target"].shape
+    assert outputs["region_prediction"].shape == (2, 16, 24)
+    assert outputs["region_target"].shape == (2, 16, 24)

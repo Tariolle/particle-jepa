@@ -44,7 +44,6 @@ The intended comparison set is:
 
 1. **Particle-JEPA**: graph-native JEPA adapted to particle dynamics, with SIGReg.
 2. **GNS baseline**: Graph Network Simulator-style learned physical simulator.
-3. **Hybrid GNS + JEPA**: dynamics prediction plus the Particle-JEPA auxiliary objective.
 
 ## Graph Representation
 
@@ -57,10 +56,9 @@ The intended comparison set is:
 
 - Toy 2D particle rollout generator.
 - Dynamic particle graph construction with PyTorch Geometric.
-- Particle-JEPA with node-level and graph-level latent next-state prediction.
+- Particle-JEPA with node-level, region-level, and graph-level latent next-state prediction.
 - SIGReg anti-collapse regularization.
 - GNS-style baseline.
-- Hybrid GNS + JEPA model.
 - Hydra configuration.
 - Weights & Biases tracking support.
 - FP16 autocast on CUDA.
@@ -105,12 +103,6 @@ Train the GNS-style baseline:
 python scripts/train.py --config-name gns
 ```
 
-Train the hybrid model:
-
-```bash
-python scripts/train.py --config-name hybrid
-```
-
 Use Hydra overrides:
 
 ```bash
@@ -124,7 +116,7 @@ wandb login
 python scripts/train.py tracking.enabled=true
 ```
 
-Export a rollout strip from a GNS or hybrid checkpoint:
+Export a rollout strip from a GNS checkpoint:
 
 ```bash
 python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 32
@@ -147,10 +139,9 @@ Train on the official LTS sample:
 ```bash
 python scripts/train.py --config-name lts_particle_jepa
 python scripts/train.py --config-name lts_gns
-python scripts/train.py --config-name lts_hybrid
 ```
 
-Export a real LTS rollout GIF from a GNS or hybrid checkpoint:
+Export a real LTS rollout GIF from a GNS checkpoint:
 
 ```bash
 python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 64 --output runs/<run>_gns/visualizations/lts_rollout.gif
@@ -179,7 +170,7 @@ Particle-JEPA is evaluated with:
 - latent standard deviation diagnostics,
 - latent trajectory visualizations.
 
-GNS and hybrid models are evaluated with:
+GNS is evaluated with:
 
 - one-step prediction error,
 - rollout position error,
@@ -195,7 +186,7 @@ Current LTS support:
 - TFRecord parsing through protobuf.
 - Official metadata radius and bounds.
 - Finite-difference velocities from particle positions.
-- GNS/Hybrid rollout from real decoded trajectories.
+- GNS rollout from real decoded trajectories.
 
 See [docs/learning_to_simulate.md](docs/learning_to_simulate.md).
 

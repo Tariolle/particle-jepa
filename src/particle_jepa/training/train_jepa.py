@@ -30,6 +30,7 @@ def train_jepa(
         mlp_layers=model_cfg.get("mlp_layers", 2),
         max_horizon=model_cfg.get("max_horizon", 32),
         latent_predictor_steps=model_cfg.get("latent_predictor_steps", 2),
+        region_grid_size=model_cfg.get("region_grid_size", 4),
     ).to(device)
     model = compile_model(model, config)
     loader = make_pyg_dataloader(dataset, config, device, shuffle=True)
@@ -48,6 +49,7 @@ def train_jepa(
     for epoch in range(train_cfg["epochs"]):
         model.train()
         running = 0.0
+        running_parts: dict[str, float] = {}
         for context, future in tqdm(loader, desc=f"jepa epoch {epoch + 1}", leave=False):
             context = move_to_device(context, device)
             future = move_to_device(future, device)
@@ -62,9 +64,18 @@ def train_jepa(
             scaler.step(optimizer)
             scaler.update()
             running += loss.item()
+            for name, value in losses.items():
+                if name == "loss":
+                    continue
+                running_parts[name] = running_parts.get(name, 0.0) + value.item()
         train_loss = running / max(len(loader), 1)
         val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
-        row = {"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss}
+        row = {
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            **{name: value / max(len(loader), 1) for name, value in running_parts.items()},
+        }
         if run_dir is not None:
             append_jsonl(run_dir / "logs.jsonl", row)
         if tracker is not None:
