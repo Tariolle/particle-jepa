@@ -20,7 +20,7 @@ data:
   noise_std: 0.00067
   apply_noise: true
   use_official_features: true
-  batch_size: 4
+  batch_size: 6
   num_workers: 6
   pin_memory: true
   persistent_workers: true
