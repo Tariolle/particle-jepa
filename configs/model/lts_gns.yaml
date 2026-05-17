@@ -20,8 +20,11 @@ data:
   noise_std: 0.00067
   apply_noise: true
   use_official_features: true
-  batch_size: 2
-  num_workers: 0
+  batch_size: 4
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
 
 model:
   type: gns
@@ -51,6 +54,9 @@ training:
   compile: true
   compile_mode: reduce-overhead
   compile_fullgraph: false
+  compile_dynamic: true
+  cudagraph_skip_dynamic_graphs: true
+  cudagraph_dynamic_shape_warn_limit: null
 
 tracking:
   provider: wandb

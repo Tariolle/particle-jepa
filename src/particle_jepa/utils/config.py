@@ -61,6 +61,13 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "compile": training.get("compile", True),
                 "compile_mode": training.get("compile_mode", "reduce-overhead"),
                 "compile_fullgraph": training.get("compile_fullgraph", False),
+                "compile_dynamic": training.get("compile_dynamic"),
+                "cudagraph_skip_dynamic_graphs": training.get(
+                    "cudagraph_skip_dynamic_graphs", True
+                ),
+                "cudagraph_dynamic_shape_warn_limit": training.get(
+                    "cudagraph_dynamic_shape_warn_limit"
+                ),
                 "dynamics_loss_weight": loss.get("dynamics_loss_weight", 1.0),
                 "jepa_loss_weight": loss.get("jepa_loss_weight", 0.2),
                 "prediction_weight": loss.get("prediction_weight", 1.0),

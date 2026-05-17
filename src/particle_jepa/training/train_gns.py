@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import torch
-from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from particle_jepa.models import GraphNetworkSimulator
 from particle_jepa.training.losses import acceleration_loss
-from particle_jepa.utils.perf import autocast_context, compile_model, make_grad_scaler
+from particle_jepa.utils.perf import (
+    autocast_context,
+    compile_model,
+    make_grad_scaler,
+    make_pyg_dataloader,
+)
 from particle_jepa.utils.runs import append_jsonl
 
 
@@ -24,9 +28,9 @@ def train_gns(
         mlp_layers=model_cfg.get("mlp_layers", 2),
     ).to(device)
     model = compile_model(model, config)
-    loader = DataLoader(dataset, batch_size=train_cfg["batch_size"], shuffle=True)
+    loader = make_pyg_dataloader(dataset, config, device, shuffle=True)
     val_loader = (
-        DataLoader(val_dataset, batch_size=train_cfg["batch_size"], shuffle=False)
+        make_pyg_dataloader(val_dataset, config, device, shuffle=False)
         if val_dataset is not None
         else None
     )
