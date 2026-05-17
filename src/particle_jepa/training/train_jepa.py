@@ -10,6 +10,7 @@ from particle_jepa.utils.perf import (
     compile_model,
     make_grad_scaler,
     make_pyg_dataloader,
+    move_to_device,
 )
 from particle_jepa.utils.runs import append_jsonl
 
@@ -48,8 +49,8 @@ def train_jepa(
         model.train()
         running = 0.0
         for context, future in tqdm(loader, desc=f"jepa epoch {epoch + 1}", leave=False):
-            context = context.to(device)
-            future = future.to(device)
+            context = move_to_device(context, device)
+            future = move_to_device(future, device)
             optimizer.zero_grad(set_to_none=True)
             with autocast_context(device, config):
                 outputs = model(context, future)
@@ -77,8 +78,8 @@ def _evaluate(model: ParticleJEPA, loader, device: torch.device) -> float:
     running = 0.0
     with torch.no_grad():
         for context, future in loader:
-            context = context.to(device)
-            future = future.to(device)
+            context = move_to_device(context, device)
+            future = move_to_device(future, device)
             with autocast_context(device, {"train": {"precision": "fp16"}}):
                 outputs = model(context, future)
                 running += temporal_graph_jepa_loss(outputs, {"train": {}})["loss"].item()

@@ -11,6 +11,13 @@ from torch_geometric.loader import DataLoader
 def configure_inductor(config: dict[str, Any]) -> None:
     """Apply torch.compile settings that matter for variable-size PyG graphs."""
     train_cfg = config.get("train", {})
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = bool(train_cfg.get("allow_tf32", True))
+        torch.backends.cudnn.allow_tf32 = bool(train_cfg.get("allow_tf32", True))
+        try:
+            torch.set_float32_matmul_precision(train_cfg.get("float32_matmul_precision", "high"))
+        except Exception as exc:
+            print(f"could not set float32 matmul precision: {exc}")
     if not train_cfg.get("compile", True):
         return
     try:
@@ -85,6 +92,11 @@ def make_pyg_dataloader(
         kwargs["persistent_workers"] = bool(data_cfg.get("persistent_workers", True))
         kwargs["prefetch_factor"] = int(data_cfg.get("prefetch_factor", 2))
     return DataLoader(dataset, **kwargs)
+
+
+def move_to_device(batch, device: torch.device):
+    """Move a PyG batch to device using non-blocking copies when pinned memory is enabled."""
+    return batch.to(device, non_blocking=device.type == "cuda")
 
 
 def strip_compiled_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:

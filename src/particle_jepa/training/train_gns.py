@@ -10,6 +10,7 @@ from particle_jepa.utils.perf import (
     compile_model,
     make_grad_scaler,
     make_pyg_dataloader,
+    move_to_device,
 )
 from particle_jepa.utils.runs import append_jsonl
 
@@ -45,7 +46,7 @@ def train_gns(
         model.train()
         running = 0.0
         for context, _future in tqdm(loader, desc=f"gns epoch {epoch + 1}", leave=False):
-            context = context.to(device)
+            context = move_to_device(context, device)
             optimizer.zero_grad(set_to_none=True)
             with autocast_context(device, config):
                 prediction = model(context)
@@ -74,7 +75,7 @@ def _evaluate(model: GraphNetworkSimulator, loader, device: torch.device) -> flo
     running = 0.0
     with torch.no_grad():
         for context, _future in loader:
-            context = context.to(device)
+            context = move_to_device(context, device)
             with autocast_context(device, {"train": {"precision": "fp16"}}):
                 running += acceleration_loss(
                     model(context), context.y_acceleration, getattr(context, "dynamic_mask", None)
