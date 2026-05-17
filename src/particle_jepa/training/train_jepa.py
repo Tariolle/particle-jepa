@@ -5,12 +5,14 @@ from tqdm import tqdm
 
 from particle_jepa.models import ParticleJEPA
 from particle_jepa.training.losses import temporal_graph_jepa_loss
+from particle_jepa.utils.checkpointing import save_checkpoint
 from particle_jepa.utils.perf import (
     autocast_context,
     compile_model,
     make_grad_scaler,
     make_pyg_dataloader,
     move_to_device,
+    unwrap_compiled_model,
 )
 from particle_jepa.utils.runs import append_jsonl
 
@@ -54,13 +56,20 @@ def train_jepa(
         seen_batches = 0
         for context, future in tqdm(loader, desc=f"jepa epoch {epoch + 1}", leave=False):
             seen_batches += 1
-            context = move_to_device(context, device)
-            future = move_to_device(future, device)
-            optimizer.zero_grad(set_to_none=True)
-            with autocast_context(device, config):
-                outputs = model(context, future)
-                losses = temporal_graph_jepa_loss(outputs, config)
-                loss = losses["loss"]
+            try:
+                context = move_to_device(context, device)
+                future = move_to_device(future, device)
+                optimizer.zero_grad(set_to_none=True)
+                with autocast_context(device, config):
+                    outputs = model(context, future)
+                    losses = temporal_graph_jepa_loss(outputs, config)
+                    loss = losses["loss"]
+            except torch.OutOfMemoryError:
+                skipped_batches += 1
+                optimizer.zero_grad(set_to_none=True)
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+                continue
             if not torch.isfinite(loss):
                 skipped_batches += 1
                 optimizer.zero_grad(set_to_none=True)
@@ -97,6 +106,17 @@ def train_jepa(
         if tracker is not None:
             tracker.log(row, step=epoch + 1)
         print(f"epoch={epoch + 1} loss={train_loss:.6f} val_loss={val_loss}")
+        if run_dir is not None and (epoch + 1) % train_cfg.get("checkpoint_every", 1) == 0:
+            save_checkpoint(
+                {
+                    "model": unwrap_compiled_model(model).state_dict(),
+                    "config": config,
+                    "epoch": epoch + 1,
+                    "optimizer": optimizer.state_dict(),
+                    "scaler": scaler.state_dict(),
+                },
+                run_dir / "checkpoints" / f"epoch_{epoch + 1:04d}.pt",
+            )
     return model
 
 

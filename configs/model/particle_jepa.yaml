@@ -13,7 +13,7 @@ data:
   dt: 0.01
   graph_radius: 0.15
   horizon: 1
-  batch_size: 8
+  batch_size: 4
   num_workers: 0
 
 model:
