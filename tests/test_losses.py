@@ -3,7 +3,12 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from particle_jepa.training.losses import acceleration_loss, latent_prediction_loss, sigreg_loss
+from particle_jepa.training.losses import (
+    acceleration_loss,
+    latent_prediction_loss,
+    sigreg_loss,
+    temporal_graph_jepa_loss,
+)
 
 
 def test_acceleration_loss_is_zero_for_equal_tensors() -> None:
@@ -46,3 +51,23 @@ def test_sigreg_loss_penalizes_collapsed_latents() -> None:
     varied = torch.randn(16, 8)
 
     assert sigreg_loss(collapsed) > sigreg_loss(varied)
+
+
+def test_temporal_jepa_loss_is_finite_for_tiny_fp16_latents() -> None:
+    tiny = torch.full((4, 8), 1e-8, dtype=torch.float16)
+    node_tiny = torch.full((16, 8), 1e-8, dtype=torch.float16)
+    region_tiny = torch.full((4, 16, 8), 1e-8, dtype=torch.float16)
+    outputs = {
+        "prediction": tiny,
+        "target": tiny.clone(),
+        "context": tiny.clone(),
+        "node_prediction": node_tiny,
+        "node_target": node_tiny.clone(),
+        "region_prediction": region_tiny,
+        "region_target": region_tiny.clone(),
+        "node_mask": torch.ones(16),
+    }
+
+    losses = temporal_graph_jepa_loss(outputs, {"train": {"sigreg_sketch_dim": 4}})
+
+    assert torch.isfinite(losses["loss"])

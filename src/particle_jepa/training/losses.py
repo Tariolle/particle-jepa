@@ -15,10 +15,14 @@ def acceleration_loss(predicted: Tensor, target: Tensor, mask: Tensor | None = N
     return (error * mask).sum() / mask.sum().clamp_min(1.0)
 
 
-def latent_prediction_loss(prediction: Tensor, target: Tensor, normalize: bool = True) -> Tensor:
+def latent_prediction_loss(
+    prediction: Tensor, target: Tensor, normalize: bool = True, eps: float = 1e-6
+) -> Tensor:
+    prediction = prediction.float()
+    target = target.float()
     if normalize:
-        prediction = F.normalize(prediction, dim=-1)
-        target = F.normalize(target, dim=-1)
+        prediction = F.normalize(prediction, dim=-1, eps=eps)
+        target = F.normalize(target, dim=-1, eps=eps)
     return F.smooth_l1_loss(prediction, target)
 
 
@@ -27,23 +31,27 @@ def masked_latent_prediction_loss(
     target: Tensor,
     mask: Tensor | None = None,
     normalize: bool = True,
+    eps: float = 1e-6,
 ) -> Tensor:
+    prediction = prediction.float()
+    target = target.float()
     if normalize:
-        prediction = F.normalize(prediction, dim=-1)
-        target = F.normalize(target, dim=-1)
+        prediction = F.normalize(prediction, dim=-1, eps=eps)
+        target = F.normalize(target, dim=-1, eps=eps)
     error = F.smooth_l1_loss(prediction, target, reduction="none")
     if mask is None:
         return error.mean()
     while mask.ndim < error.ndim:
         mask = mask.unsqueeze(-1)
     mask = mask.to(device=error.device, dtype=error.dtype)
-    return (error * mask).sum() / mask.sum().clamp_min(1.0)
+    return (error * mask).sum() / (mask.sum() * error.size(-1)).clamp_min(1.0)
 
 
 def sigreg_loss(latents: Tensor, sketch_dim: int = 64, eps: float = 1e-4) -> Tensor:
     """Sketched isotropic Gaussian regularization for anti-collapse."""
     latents = latents.float()
     latents = latents.flatten(0, -2) if latents.ndim > 2 else latents
+    latents = latents[torch.isfinite(latents).all(dim=-1)]
     if latents.size(0) < 2:
         return latents.new_tensor(0.0)
     if sketch_dim > 0 and sketch_dim < latents.size(-1):
@@ -58,7 +66,7 @@ def sigreg_loss(latents: Tensor, sketch_dim: int = 64, eps: float = 1e-4) -> Ten
         sketch = sketch / latents.size(-1) ** 0.5
         latents = latents @ sketch
     latents = latents - latents.mean(dim=0, keepdim=True)
-    std = latents.std(dim=0)
+    std = latents.std(dim=0, unbiased=False)
     variance_loss = F.relu(1.0 - std).pow(2).mean()
     cov = latents.T @ latents / max(latents.size(0) - 1, 1)
     identity = torch.eye(cov.size(0), device=cov.device, dtype=cov.dtype)

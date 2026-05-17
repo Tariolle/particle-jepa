@@ -50,7 +50,10 @@ def train_jepa(
         model.train()
         running = 0.0
         running_parts: dict[str, float] = {}
+        skipped_batches = 0
+        seen_batches = 0
         for context, future in tqdm(loader, desc=f"jepa epoch {epoch + 1}", leave=False):
+            seen_batches += 1
             context = move_to_device(context, device)
             future = move_to_device(future, device)
             optimizer.zero_grad(set_to_none=True)
@@ -58,9 +61,20 @@ def train_jepa(
                 outputs = model(context, future)
                 losses = temporal_graph_jepa_loss(outputs, config)
                 loss = losses["loss"]
+            if not torch.isfinite(loss):
+                skipped_batches += 1
+                optimizer.zero_grad(set_to_none=True)
+                continue
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.get("grad_clip_norm", 1.0))
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), train_cfg.get("grad_clip_norm", 1.0)
+            )
+            if not torch.isfinite(grad_norm):
+                skipped_batches += 1
+                optimizer.zero_grad(set_to_none=True)
+                scaler.update()
+                continue
             scaler.step(optimizer)
             scaler.update()
             running += loss.item()
@@ -68,13 +82,15 @@ def train_jepa(
                 if name == "loss":
                     continue
                 running_parts[name] = running_parts.get(name, 0.0) + value.item()
-        train_loss = running / max(len(loader), 1)
+        used_batches = max(seen_batches - skipped_batches, 1)
+        train_loss = running / used_batches
         val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
         row = {
             "epoch": epoch + 1,
             "train_loss": train_loss,
             "val_loss": val_loss,
-            **{name: value / max(len(loader), 1) for name, value in running_parts.items()},
+            "skipped_batches": skipped_batches,
+            **{name: value / used_batches for name, value in running_parts.items()},
         }
         if run_dir is not None:
             append_jsonl(run_dir / "logs.jsonl", row)
