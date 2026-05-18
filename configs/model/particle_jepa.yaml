@@ -13,8 +13,11 @@ data:
   dt: 0.01
   graph_radius: 0.15
   horizon: 1
+  horizons: [1, 2, 4]
   batch_size: 6
   num_workers: 0
+  bucketed_batches: true
+  bucket_size: 128
 
 model:
   type: particle_jepa
@@ -29,6 +32,10 @@ model:
   dropout: 0.0
   max_horizon: 32
   latent_predictor_steps: 5
+  predictor_type: graph_transformer
+  predictor_layers: 4
+  predictor_heads: 4
+  predictor_dropout: 0.1
   region_grid_size: 4
 
 loss:
@@ -52,8 +59,14 @@ training:
   device: auto
   precision: fp16
   compile: true
+  compile_scope: regional
+  compile_required: true
   compile_mode: reduce-overhead
   compile_fullgraph: false
+  compile_dynamic: true
+  preflight_warmup_batches: 1
+  preflight_batches: 4
+  preflight_max_epoch_seconds: 120
 
 tracking:
   provider: wandb

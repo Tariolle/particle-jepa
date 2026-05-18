@@ -29,3 +29,18 @@ def test_toy_dataset_returns_context_future_pair() -> None:
     assert future.x.shape == (8, 7)
     assert context.y_acceleration.shape == (8, 2)
     assert context.horizon.item() == 2
+
+
+def test_toy_dataset_cycles_future_offsets_without_growing_budget() -> None:
+    dataset = ToyParticleDataset(
+        ToyParticleConfig(
+            num_trajectories=1,
+            num_particles=8,
+            sequence_length=8,
+            future_offset=1,
+            future_offsets=(1, 2, 4),
+        )
+    )
+
+    assert len(dataset) == 4
+    assert [dataset[index][0].horizon.item() for index in range(len(dataset))] == [1, 2, 4, 1]

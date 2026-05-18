@@ -44,6 +44,7 @@ class LearningToSimulateConfig:
     root: str | Path = "data/raw/WaterDropSample"
     split: str = "train"
     future_offset: int = 1
+    future_offsets: tuple[int, ...] | list[int] | None = None
     radius: float | None = None
     max_neighbors: int | None = None
     max_trajectories: int | None = None
@@ -94,10 +95,15 @@ class LearningToSimulateDataset(Dataset):
     def __len__(self) -> int:
         return len(self.indices)
 
+    def estimate_graph_size(self, index: int) -> int:
+        """Return particle count for shape-aware batch bucketing."""
+        traj_idx, _time_idx, _future_offset = self.indices[int(index)]
+        return int(self.trajectories[traj_idx]["positions"].size(1))
+
     def __getitem__(self, index: int):
-        traj_idx, time_idx = self.indices[index]
+        traj_idx, time_idx, future_offset = self.indices[index]
         trajectory = self.trajectories[traj_idx]
-        future_idx = time_idx + self.config.future_offset
+        future_idx = time_idx + future_offset
 
         particle_type = trajectory["particle_types"]
         position_sequence = self._position_sequence(trajectory, time_idx)
@@ -124,8 +130,8 @@ class LearningToSimulateDataset(Dataset):
         context.y_acceleration = acceleration
         context.dynamic_mask = dynamic_mask.float()
         context.kinematic_mask = (~dynamic_mask).float()
-        context.horizon = torch.tensor([self.config.future_offset], dtype=torch.long)
-        future.horizon = torch.tensor([self.config.future_offset], dtype=torch.long)
+        context.horizon = torch.tensor([future_offset], dtype=torch.long)
+        future.horizon = torch.tensor([future_offset], dtype=torch.long)
         if "step_context" in trajectory:
             context.step_context = trajectory["step_context"][time_idx]
             future.step_context = trajectory["step_context"][future_idx]
@@ -163,17 +169,32 @@ class LearningToSimulateDataset(Dataset):
             boundary=self._boundary_flags(positions)[:, None],
         )
 
-    def _build_indices(self) -> list[tuple[int, int]]:
-        indices: list[tuple[int, int]] = []
+    def _build_indices(self) -> list[tuple[int, int, int]]:
+        indices: list[tuple[int, int, int]] = []
         stride = max(int(self.config.sample_stride), 1)
+        offsets = self._future_offsets()
+        max_offset = max(offsets)
         for traj_idx, trajectory in enumerate(self.trajectories):
             start_t = max(int(self.config.input_sequence_length) - 1, 1)
-            max_t = trajectory["positions"].size(0) - self.config.future_offset
+            max_t = trajectory["positions"].size(0) - max_offset
             time_indices = list(range(start_t, max_t, stride))
             if self.config.max_samples_per_trajectory is not None:
                 time_indices = time_indices[: self.config.max_samples_per_trajectory]
-            indices.extend((traj_idx, time_idx) for time_idx in time_indices)
+            indices.extend(
+                (traj_idx, time_idx, offsets[sample_idx % len(offsets)])
+                for sample_idx, time_idx in enumerate(time_indices)
+            )
         return indices
+
+    def _future_offsets(self) -> tuple[int, ...]:
+        offsets = self.config.future_offsets
+        if offsets is None:
+            offsets = (self.config.future_offset,)
+        offsets = tuple(sorted({max(1, int(offset)) for offset in offsets}))
+        if not offsets:
+            msg = "At least one future offset is required."
+            raise ValueError(msg)
+        return offsets
 
     def _boundary_flags(self, positions: Tensor) -> Tensor:
         bounds = self.metadata.get("bounds")

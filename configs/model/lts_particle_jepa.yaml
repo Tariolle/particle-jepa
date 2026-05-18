@@ -8,6 +8,7 @@ data:
   data_root: data/raw/WaterRamps
   split: train
   horizon: 1
+  horizons: [1, 2, 4]
   graph_radius: null
   max_neighbors: null
   max_trajectories: 32
@@ -25,6 +26,8 @@ data:
   pin_memory: true
   persistent_workers: true
   prefetch_factor: 2
+  bucketed_batches: true
+  bucket_size: 256
 
 model:
   type: particle_jepa
@@ -39,6 +42,10 @@ model:
   dropout: 0.0
   max_horizon: 32
   latent_predictor_steps: 5
+  predictor_type: graph_transformer
+  predictor_layers: 6
+  predictor_heads: 4
+  predictor_dropout: 0.1
   region_grid_size: 4
 
 loss:
@@ -62,6 +69,8 @@ training:
   device: auto
   precision: fp16
   compile: true
+  compile_scope: regional
+  compile_required: true
   compile_mode: reduce-overhead
   compile_fullgraph: false
   compile_dynamic: true
@@ -69,6 +78,12 @@ training:
   cudagraph_dynamic_shape_warn_limit: null
   allow_tf32: true
   float32_matmul_precision: high
+  preflight_warmup_batches: 4
+  preflight_batches: 64
+  preflight_min_batches_per_second: 1.0
+  preflight_max_epoch_seconds: 600
+  max_batch_seconds: 10
+  max_epoch_seconds: 1200
 
 tracking:
   provider: wandb

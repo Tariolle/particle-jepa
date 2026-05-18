@@ -29,3 +29,20 @@ def test_jepa_forward_shape() -> None:
     assert outputs["node_prediction"].shape == outputs["node_target"].shape
     assert outputs["region_prediction"].shape == (2, 16, 24)
     assert outputs["region_target"].shape == (2, 16, 24)
+
+
+def test_jepa_graph_transformer_predictor_forward_shape() -> None:
+    context, future = _batch()
+    model = ParticleJEPA(
+        hidden_dim=32,
+        latent_dim=24,
+        message_passing_steps=2,
+        predictor_type="graph_transformer",
+        predictor_layers=2,
+        predictor_heads=4,
+        predictor_dropout=0.0,
+    )
+    outputs = model(context, future)
+    assert outputs["prediction"].shape == (2, 24)
+    assert outputs["target"].shape == (2, 24)
+    assert outputs["node_prediction"].shape == outputs["node_target"].shape

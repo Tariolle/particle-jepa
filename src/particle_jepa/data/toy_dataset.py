@@ -17,6 +17,7 @@ class ToyParticleConfig:
     dimension: int = 2
     dt: float = 0.05
     future_offset: int = 4
+    future_offsets: tuple[int, ...] | list[int] | None = None
     radius: float = 0.25
     noise_std: float = 0.002
     box_size: float = 1.0
@@ -112,15 +113,21 @@ class ToyParticleDataset(Dataset):
         self.velocities = self.trajectory["velocities"]
         self.particle_types = self.trajectory["particle_types"]
         self.graph_builder = ParticleGraphBuilder(radius=self.config.radius)
-        self.samples_per_trajectory = self.config.sequence_length - self.config.future_offset
+        self.future_offsets = self._future_offsets()
+        self.samples_per_trajectory = self.config.sequence_length - max(self.future_offsets)
 
     def __len__(self) -> int:
         return self.config.num_trajectories * self.samples_per_trajectory
 
+    def estimate_graph_size(self, index: int) -> int:
+        """Return a cheap proxy for bucketed batching."""
+        return self.config.num_particles
+
     def __getitem__(self, index: int):
         traj_idx = index // self.samples_per_trajectory
         time_idx = index % self.samples_per_trajectory
-        future_idx = time_idx + self.config.future_offset
+        future_offset = self.future_offsets[time_idx % len(self.future_offsets)]
+        future_idx = time_idx + future_offset
 
         context = self.graph_builder.build(
             self.positions[traj_idx, time_idx],
@@ -140,6 +147,16 @@ class ToyParticleDataset(Dataset):
         context.y_pos = next_position
         context.y_velocity = next_velocity
         context.y_acceleration = acceleration
-        context.horizon = torch.tensor([self.config.future_offset], dtype=torch.long)
-        future.horizon = torch.tensor([self.config.future_offset], dtype=torch.long)
+        context.horizon = torch.tensor([future_offset], dtype=torch.long)
+        future.horizon = torch.tensor([future_offset], dtype=torch.long)
         return context, future
+
+    def _future_offsets(self) -> tuple[int, ...]:
+        offsets = self.config.future_offsets
+        if offsets is None:
+            offsets = (self.config.future_offset,)
+        offsets = tuple(sorted({max(1, int(offset)) for offset in offsets}))
+        if not offsets:
+            msg = "At least one future offset is required."
+            raise ValueError(msg)
+        return offsets

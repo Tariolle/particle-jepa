@@ -5,7 +5,10 @@ from torch import Tensor, nn
 from torch_geometric.data import Batch, Data
 
 from particle_jepa.models.encoders import ParticleGraphEncoder
-from particle_jepa.models.predictors import LatentGraphPredictor
+from particle_jepa.models.predictors import (
+    LatentGraphPredictor,
+    LatentGraphTransformerPredictor,
+)
 
 
 class ParticleJEPA(nn.Module):
@@ -23,6 +26,10 @@ class ParticleJEPA(nn.Module):
         max_horizon: int = 32,
         latent_predictor_steps: int = 2,
         region_grid_size: int = 4,
+        predictor_type: str = "message_passing",
+        predictor_layers: int | None = None,
+        predictor_heads: int = 4,
+        predictor_dropout: float | None = None,
     ) -> None:
         super().__init__()
         self.region_grid_size = region_grid_size
@@ -37,24 +44,65 @@ class ParticleJEPA(nn.Module):
         )
         self.target_encoder = self.context_encoder
         self.horizon_embedding = nn.Embedding(max_horizon + 1, latent_dim)
-        self.predictor = LatentGraphPredictor(
-            latent_dim=latent_dim,
-            edge_dim=edge_dim,
-            hidden_dim=hidden_dim,
-            steps=latent_predictor_steps,
-            dropout=dropout,
-            mlp_layers=mlp_layers,
-        )
+        predictor_dropout = dropout if predictor_dropout is None else predictor_dropout
+        predictor_layers = predictor_layers or latent_predictor_steps
+        if predictor_type in {"graph_transformer", "transformer"}:
+            self.predictor = LatentGraphTransformerPredictor(
+                latent_dim=latent_dim,
+                edge_dim=edge_dim,
+                hidden_dim=hidden_dim,
+                layers=predictor_layers,
+                heads=predictor_heads,
+                dropout=predictor_dropout,
+                mlp_layers=mlp_layers,
+            )
+        elif predictor_type in {"message_passing", "mpnn"}:
+            self.predictor = LatentGraphPredictor(
+                latent_dim=latent_dim,
+                edge_dim=edge_dim,
+                hidden_dim=hidden_dim,
+                steps=latent_predictor_steps,
+                dropout=dropout,
+                mlp_layers=mlp_layers,
+            )
+        else:
+            msg = f"Unsupported predictor_type '{predictor_type}'."
+            raise ValueError(msg)
 
     def forward(
         self, context_graph: Data | Batch, future_graph: Data | Batch, horizon: Tensor | None = None
     ) -> dict[str, Tensor]:
-        context_node_latents, _ = self.context_encoder(context_graph, pool=False)
+        prediction_outputs = self.predict(context_graph, horizon=horizon)
+        context_node_latents = prediction_outputs["node_context"]
+        context_batch = _batch_vector(context_graph, context_node_latents)
+        batch_size = _num_graphs(context_graph)
         target_node_latents, _ = self.target_encoder(future_graph, pool=False)
+        target_latent = _mean_pool(target_node_latents, context_batch, batch_size)
+        region_target = spatial_region_pool(
+            target_node_latents,
+            context_graph.pos,
+            context_batch,
+            self.region_grid_size,
+            batch_size,
+        )
+        return {
+            "prediction": prediction_outputs["prediction"],
+            "target": target_latent,
+            "context": prediction_outputs["context"],
+            "node_prediction": prediction_outputs["node_prediction"],
+            "node_target": target_node_latents,
+            "node_context": context_node_latents,
+            "region_prediction": prediction_outputs["region_prediction"],
+            "region_target": region_target,
+            "node_mask": getattr(context_graph, "dynamic_mask", None),
+        }
+
+    def predict(self, context_graph: Data | Batch, horizon: Tensor | None = None) -> dict:
+        """Predict future latents from a context graph without using the target branch."""
+        context_node_latents, _ = self.context_encoder(context_graph, pool=False)
         context_batch = _batch_vector(context_graph, context_node_latents)
         batch_size = _num_graphs(context_graph)
         context_latent = _mean_pool(context_node_latents, context_batch, batch_size)
-        target_latent = _mean_pool(target_node_latents, context_batch, batch_size)
         horizon = _resolve_horizon(
             context_graph, context_latent.size(0), context_latent.device, horizon
         )
@@ -71,24 +119,28 @@ class ParticleJEPA(nn.Module):
             self.region_grid_size,
             batch_size,
         )
-        region_target = spatial_region_pool(
-            target_node_latents,
-            context_graph.pos,
-            context_batch,
-            self.region_grid_size,
-            batch_size,
-        )
         return {
             "prediction": prediction,
-            "target": target_latent,
             "context": context_latent,
             "node_prediction": node_prediction,
-            "node_target": target_node_latents,
             "node_context": context_node_latents,
             "region_prediction": region_prediction,
-            "region_target": region_target,
-            "node_mask": getattr(context_graph, "dynamic_mask", None),
         }
+
+    def compile_regions(self, **compile_kwargs) -> int:
+        """Compile dense repeated regions while leaving sparse PyG graph glue eager."""
+        return _compile_dense_regions(self, **compile_kwargs)
+
+
+def _compile_dense_regions(module: nn.Module, **compile_kwargs) -> int:
+    compiled = 0
+    for name, child in list(module.named_children()):
+        if isinstance(child, nn.Sequential):
+            setattr(module, name, torch.compile(child, **compile_kwargs))
+            compiled += 1
+        else:
+            compiled += _compile_dense_regions(child, **compile_kwargs)
+    return compiled
 
 
 def _resolve_horizon(
@@ -116,10 +168,11 @@ def _num_graphs(graph: Data | Batch) -> int:
 
 
 def _mean_pool(values: Tensor, batch: Tensor, batch_size: int) -> Tensor:
-    pooled = values.new_zeros((batch_size, values.size(-1)))
-    counts = values.new_zeros((batch_size, 1))
-    pooled.index_add_(0, batch, values)
-    counts.index_add_(0, batch, torch.ones((values.size(0), 1), device=values.device))
+    values_fp32 = values.float()
+    pooled = values_fp32.new_zeros((batch_size, values.size(-1)))
+    counts = values_fp32.new_zeros((batch_size, 1))
+    pooled.index_add_(0, batch, values_fp32)
+    counts.index_add_(0, batch, values_fp32.new_ones((values.size(0), 1)))
     return pooled / counts.clamp_min(1.0)
 
 
@@ -139,9 +192,10 @@ def spatial_region_pool(
     bins = (xy * grid_size).long().clamp(0, grid_size - 1)
     region = bins[:, 1] * grid_size + bins[:, 0]
     flat_region = batch * num_regions + region
-    pooled = values.new_zeros((batch_size * num_regions, values.size(-1)))
-    counts = values.new_zeros((batch_size * num_regions, 1))
-    pooled.index_add_(0, flat_region, values)
-    counts.index_add_(0, flat_region, torch.ones((values.size(0), 1), device=values.device))
+    values_fp32 = values.float()
+    pooled = values_fp32.new_zeros((batch_size * num_regions, values.size(-1)))
+    counts = values_fp32.new_zeros((batch_size * num_regions, 1))
+    pooled.index_add_(0, flat_region, values_fp32)
+    counts.index_add_(0, flat_region, values_fp32.new_ones((values.size(0), 1)))
     pooled = pooled / counts.clamp_min(1.0)
     return pooled.view(batch_size, num_regions, values.size(-1))

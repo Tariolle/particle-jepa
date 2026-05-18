@@ -148,6 +148,10 @@ def _build_retrieval_model(config: dict):
         "max_horizon": model_cfg.get("max_horizon", 32),
         "latent_predictor_steps": model_cfg.get("latent_predictor_steps", 2),
         "region_grid_size": model_cfg.get("region_grid_size", 4),
+        "predictor_type": model_cfg.get("predictor_type", "message_passing"),
+        "predictor_layers": model_cfg.get("predictor_layers"),
+        "predictor_heads": model_cfg.get("predictor_heads", 4),
+        "predictor_dropout": model_cfg.get("predictor_dropout"),
     }
     return ParticleJEPA(
         **kwargs,
@@ -157,6 +161,20 @@ def _build_retrieval_model(config: dict):
 def _small_data_config(data_config: dict, max_samples: int) -> dict:
     config = dict(data_config)
     config["apply_noise"] = False
+    if config.get("dataset") == "learning_to_simulate":
+        original_samples_per_trajectory = max(
+            int(config.get("max_samples_per_trajectory") or 128), 1
+        )
+        trajectories = max(
+            1,
+            (max_samples + original_samples_per_trajectory - 1) // original_samples_per_trajectory,
+        )
+        samples_per_trajectory = max(1, (max_samples + trajectories - 1) // trajectories)
+        config["max_trajectories"] = trajectories
+        config["max_samples_per_trajectory"] = min(
+            original_samples_per_trajectory, samples_per_trajectory
+        )
+        return config
     sequence_length = int(config.get("trajectory_length", config.get("sequence_length", 100)))
     horizon = int(config.get("horizon", config.get("future_offset", 5)))
     samples_per_trajectory = max(sequence_length - horizon, 1)

@@ -13,9 +13,14 @@ def build_dataset(config: dict) -> ToyParticleDataset | LearningToSimulateDatase
         aliases = {
             "data_root": "root",
             "graph_radius": "radius",
-            "horizon": "future_offset",
         }
         normalized = {aliases.get(key, key): value for key, value in config.items()}
+        if isinstance(config.get("horizon"), list):
+            normalized["future_offsets"] = config["horizon"]
+        elif "horizon" in config:
+            normalized["future_offset"] = config["horizon"]
+        if "horizons" in config:
+            normalized["future_offsets"] = config["horizons"]
         fields = LearningToSimulateConfig.__dataclass_fields__
         kwargs = {key: value for key, value in normalized.items() if key in fields}
         return LearningToSimulateDataset(LearningToSimulateConfig(**kwargs))
@@ -25,9 +30,14 @@ def build_dataset(config: dict) -> ToyParticleDataset | LearningToSimulateDatase
     aliases = {
         "trajectory_length": "sequence_length",
         "graph_radius": "radius",
-        "horizon": "future_offset",
     }
     normalized = {aliases.get(key, key): value for key, value in config.items()}
+    if isinstance(config.get("horizon"), list):
+        normalized["future_offsets"] = config["horizon"]
+    elif "horizon" in config:
+        normalized["future_offset"] = config["horizon"]
+    if "horizons" in config:
+        normalized["future_offsets"] = config["horizons"]
     if "num_train_trajectories" in normalized or "num_val_trajectories" in normalized:
         normalized["num_trajectories"] = normalized.get(
             "num_train_trajectories", 0

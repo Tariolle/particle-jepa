@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import math
+import random
+from collections.abc import Iterator
 from contextlib import nullcontext
 from typing import Any
 
 import torch
 from torch import nn
+from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
 
 
@@ -38,19 +42,37 @@ def compile_model(model: nn.Module, config: dict[str, Any]) -> nn.Module:
     if not train_cfg.get("compile", True):
         return model
     configure_inductor(config)
+    scope = train_cfg.get("compile_scope", "full")
+    kwargs = _compile_kwargs(train_cfg)
+    if scope == "regional":
+        compile_regions = getattr(model, "compile_regions", None)
+        if compile_regions is None:
+            msg = f"{model.__class__.__name__} does not support regional compilation."
+            raise RuntimeError(msg)
+        count = compile_regions(**kwargs)
+        print(f"torch.compile regional scope: compiled {count} dense regions")
+        return model
+    if scope != "full":
+        msg = f"Unsupported compile_scope '{scope}'. Expected 'full' or 'regional'."
+        raise ValueError(msg)
     try:
-        kwargs = {}
-        if train_cfg.get("compile_dynamic", None) is not None:
-            kwargs["dynamic"] = bool(train_cfg["compile_dynamic"])
-        return torch.compile(
-            model,
-            mode=train_cfg.get("compile_mode", "reduce-overhead"),
-            fullgraph=train_cfg.get("compile_fullgraph", False),
-            **kwargs,
-        )
+        return torch.compile(model, **kwargs)
     except Exception as exc:
+        if train_cfg.get("compile_required", True):
+            msg = "torch.compile failed and compile_required=true."
+            raise RuntimeError(msg) from exc
         print(f"torch.compile unavailable, continuing eager: {exc}")
         return model
+
+
+def _compile_kwargs(train_cfg: dict[str, Any]) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "mode": train_cfg.get("compile_mode", "reduce-overhead"),
+        "fullgraph": train_cfg.get("compile_fullgraph", False),
+    }
+    if train_cfg.get("compile_dynamic") is not None:
+        kwargs["dynamic"] = bool(train_cfg["compile_dynamic"])
+    return kwargs
 
 
 def unwrap_compiled_model(model: nn.Module) -> nn.Module:
@@ -83,14 +105,24 @@ def make_pyg_dataloader(
     data_cfg = config.get("data", {})
     num_workers = int(data_cfg.get("num_workers", train_cfg.get("num_workers", 0)))
     kwargs: dict[str, Any] = {
-        "batch_size": int(train_cfg["batch_size"]),
-        "shuffle": shuffle,
         "num_workers": num_workers,
         "pin_memory": bool(data_cfg.get("pin_memory", device.type == "cuda")),
     }
     if num_workers > 0:
         kwargs["persistent_workers"] = bool(data_cfg.get("persistent_workers", True))
         kwargs["prefetch_factor"] = int(data_cfg.get("prefetch_factor", 2))
+    if bool(data_cfg.get("bucketed_batches", False)):
+        kwargs["batch_sampler"] = BucketBatchSampler(
+            dataset=dataset,
+            batch_size=int(train_cfg["batch_size"]),
+            shuffle=shuffle,
+            bucket_size=int(data_cfg.get("bucket_size", 256)),
+            drop_last=bool(data_cfg.get("drop_last", False)),
+            seed=int(config.get("seed", 7)),
+        )
+    else:
+        kwargs["batch_size"] = int(train_cfg["batch_size"])
+        kwargs["shuffle"] = shuffle
     return DataLoader(dataset, **kwargs)
 
 
@@ -104,3 +136,57 @@ def strip_compiled_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, 
     if not any(key.startswith(prefix) for key in state_dict):
         return state_dict
     return {key.removeprefix(prefix): value for key, value in state_dict.items()}
+
+
+class BucketBatchSampler:
+    """Batch nearby graph sizes together to reduce dynamic-shape churn."""
+
+    def __init__(
+        self,
+        dataset,
+        batch_size: int,
+        shuffle: bool,
+        bucket_size: int = 256,
+        drop_last: bool = False,
+        seed: int = 7,
+    ) -> None:
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.bucket_size = max(bucket_size, batch_size)
+        self.drop_last = drop_last
+        self.seed = seed
+        self.epoch = 0
+        self._sizes = [_estimate_sample_size(dataset, index) for index in range(len(dataset))]
+
+    def __iter__(self) -> Iterator[list[int]]:
+        rng = random.Random(self.seed + self.epoch)
+        self.epoch += 1
+        indices = list(range(len(self.dataset)))
+        if self.shuffle:
+            rng.shuffle(indices)
+        windows = [
+            sorted(indices[start : start + self.bucket_size], key=self._sizes.__getitem__)
+            for start in range(0, len(indices), self.bucket_size)
+        ]
+        if self.shuffle:
+            rng.shuffle(windows)
+        for window in windows:
+            for start in range(0, len(window), self.batch_size):
+                batch = window[start : start + self.batch_size]
+                if len(batch) == self.batch_size or not self.drop_last:
+                    yield batch
+
+    def __len__(self) -> int:
+        if self.drop_last:
+            return len(self.dataset) // self.batch_size
+        return math.ceil(len(self.dataset) / self.batch_size)
+
+
+def _estimate_sample_size(dataset, index: int) -> int:
+    if isinstance(dataset, Subset):
+        return _estimate_sample_size(dataset.dataset, int(dataset.indices[index]))
+    estimator = getattr(dataset, "estimate_graph_size", None)
+    if estimator is not None:
+        return int(estimator(index))
+    return 0
