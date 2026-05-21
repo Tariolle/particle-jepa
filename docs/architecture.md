@@ -1,165 +1,81 @@
-# Particle-JEPA Architecture Notes
+# Architecture Notes
 
-## Goal
+This document records the architecture used in the closed Particle-JEPA
+prototype and why it was not sufficient.
 
-Particle-JEPA is a graph world model for particle dynamics. The context is the current particle graph `G_t`; the target is the next particle graph `G_t+1`.
+## Implemented Model
 
-The current graph contains positions and velocities, so unlike image-only Atari-style world models, it is already a Markov state for the toy simulator. We do not need frame stacking unless a dataset hides velocity or contains history-dependent material effects.
-
-## Comparison Set
-
-The project should compare:
-
-1. **Particle-JEPA**: graph-native latent next-state prediction with SIGReg.
-2. **GNS baseline**: official Graph Network Simulator-style dynamics prediction.
-
-## Encoder Options
-
-### GNS / MeshGraphNet-Style MPNN
-
-This is the safest default and the closest architecture to the learned simulation literature.
+Particle-JEPA used a shared particle-graph encoder for context and target
+graphs:
 
 ```text
-node features -> node MLP
-edge features -> edge MLP
-K rounds of message passing
-node latents + pooled graph latent
+G_t   -> encoder -> context node/region/graph latents
+G_t+1 -> encoder -> target node/region/graph latents
 ```
 
-Strengths:
-
-- Strong local interaction bias.
-- Natural use of edge geometry.
-- Directly comparable to GNS and MeshGraphNets.
-- Efficient on dynamic radius graphs.
-
-Weaknesses:
-
-- Long-range effects require many message-passing steps.
-- Not explicitly equivariant beyond relative geometric features.
-
-### Equivariant GNN
-
-EGNN-style models explicitly respect Euclidean symmetries.
-
-Strengths:
-
-- Better inductive bias for physics.
-- Potentially better sample efficiency and generalization.
-
-Weaknesses:
-
-- More architectural complexity.
-- Box boundaries, gravity, and material flags can break full rotational symmetry.
-
-### Graph Transformer / GraphGPS
-
-GraphGPS combines local message passing with global attention and positional or structural encodings.
-
-Strengths:
-
-- Captures global interactions.
-- Can represent long-range dependencies more directly.
-
-Weaknesses:
-
-- More expensive.
-- Less physically biased unless edge geometry is carefully injected.
-- Likely overkill before the local graph world model is validated.
-
-## Chosen Encoder
-
-Use a GNS/MeshGraphNet-style MPNN encoder first.
+A latent predictor consumed the context graph latents and predicted future
+latents:
 
 ```text
-G_t -> MPNN encoder -> latent graph H_t
-G_t+1 -> same MPNN encoder -> latent graph H_t+1
+context node latents + graph structure + horizon
+  -> latent predictor
+  -> predicted future node/region/graph latents
 ```
 
-This is grounded in learned physics simulation and gives a fair bridge to the GNS baseline.
-
-## Predictor Options
-
-### MLP Predictor
-
-The first MVP used:
-
-```text
-node latent + horizon embedding -> predicted node latent
-graph latent + horizon embedding -> predicted graph latent
-```
-
-This was useful as a smoke test, but it is too weak as the main architecture because each node is updated independently after encoding.
-
-### Latent Message-Passing Predictor
-
-The next architecture uses graph-native latent dynamics:
-
-```text
-latent node states H_t
-current graph edges E_t
-edge latents from edge features
-message passing in latent space
-predicted latent graph H_hat_t+1
-```
-
-This is the preferred predictor because it models the next latent state through relational particle interactions.
-
-### Transformer Predictor
-
-A transformer predictor is closer to LeWM's image-world-model architecture.
-
-```text
-particle latent tokens -> transformer -> predicted next latent tokens
-```
-
-This is a later option if latent message passing is insufficient.
-
-## Chosen Predictor
-
-Use a latent graph message-passing predictor:
-
-```text
-G_t
-  -> MPNN encoder
-  -> latent graph H_t
-  -> latent MPNN predictor
-  -> predicted latent graph H_hat_t+1
-
-G_t+1
-  -> same MPNN encoder
-  -> target latent graph H_t+1
-```
+The encoder was GNS/MeshGraphNet-style message passing. The predictor was tested
+with graph-native latent prediction, including transformer-style predictor
+configs for WaterRamps experiments.
 
 ## Loss
 
-Particle-JEPA uses:
+The intended objective was JEPA-style latent alignment plus SIGReg:
 
 ```text
-node latent prediction loss
-+ spatial region latent prediction loss
-+ graph latent prediction loss
-+ SIGReg anti-collapse loss
+node latent prediction
++ region latent prediction
++ graph latent prediction
++ SIGReg anti-collapse
 ```
 
-The node loss keeps the objective particle-aware. The spatial region loss avoids the destructive "everything averages together" failure mode of pure mean pooling. The graph loss remains a coarse global alignment diagnostic. SIGReg prevents low-variance latent collapse without an EMA target encoder.
+Late diagnostic runs also tested latent delta consistency. This did not change
+the outcome: the frozen latents still were not useful enough for physical
+rollout.
 
-There is no decoded-state loss in the Particle-JEPA objective. Decoders or probes are trained only after the JEPA is frozen, as an evaluation tool.
+## Probe Evaluation
 
-## How We Know The Idea Is Working
+The decoder/probe was deliberately lightweight. It was not meant to be the
+simulator; it measured whether a frozen latent contained easily recoverable
+dynamics information.
 
-The idea is not validated by low training loss alone. It becomes grounded when:
-
-- frozen probes can decode useful future particle states from predicted latents,
-- probe rollouts show plausible gravity, contact, and long-horizon behavior,
-- retrieval top-k accuracy beats chance and random-latent baselines as a secondary diagnostic,
-- latent standard deviation is not near zero,
-- predicted-vs-target latent cosine is high but not due to collapse.
-
-The threshold for comparing against GNS is:
+The important probes were:
 
 ```text
-Frozen Particle-JEPA probe rollout is physically plausible on WaterRamps
+raw_features     -> acceleration
+node_context     -> acceleration
+node_prediction  -> acceleration
 ```
 
-GNS remains the reference baseline, not the project center.
+The failing `node_context` result is the most important one: even before the
+predictor, the JEPA encoder latent did not behave like a dynamics-sufficient
+state.
+
+## Why It Failed
+
+Latent agreement does not identify simulator state. The objective can produce
+non-collapsed, predictable latents while losing details that matter for rollout:
+
+- exact velocity information,
+- gravity direction in a decodable coordinate frame,
+- contact geometry,
+- boundary relation,
+- particle type effects,
+- neighbor interactions needed for pressure/contact.
+
+Video JEPA can tolerate semantic abstraction. Particle rollout cannot: small
+acceleration errors compound immediately.
+
+## Final Architectural Takeaway
+
+The architecture was not obviously broken as code, but the objective was
+underconstrained for the task. Continuing this line would require a different
+SSL formulation, not just a larger predictor or decoder.

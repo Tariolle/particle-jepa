@@ -1,73 +1,91 @@
 # Particle-JEPA
 
-**Particle-JEPA: Self-Supervised Graph World Models for Particle Physics**
+Particle-JEPA was a research prototype testing whether a graph-native JEPA
+objective could learn useful particle-simulation dynamics from DeepMind
+Learning-to-Simulate data.
 
-Particle-JEPA is a research-oriented project for learning graph world models on particle simulations. A physical state is represented as a dynamic particle graph, and the model learns to predict the next graph state in latent space.
+The final conclusion is negative for this prototype: the supervised GNS baseline
+learned plausible WaterRamps dynamics, but the frozen Particle-JEPA latents were
+not dynamically sufficient. A lightweight probe trained on JEPA context latents
+produced physically wrong acceleration directions, and a probe trained on JEPA
+predicted latents produced incoherent particle rollouts.
 
-The project is not an LLM project and not a generic graph benchmark. It is about modeling the evolution of a physical environment represented as graphs.
+This repository is therefore best read as an archived experiment, not a finished
+simulator.
 
-## Core Idea
+## Question Tested
 
-Given the current particle graph `G_t`, predict the latent representation of the next particle graph `G_t+1`.
-
-The current state already contains positions, velocities, particle type, material flags, and boundary information, so it is rich enough to serve as the context state.
-
-```text
-current particle state
-        |
-dynamic radius graph G_t
-        |
-GNN context encoder
-        |
-node + graph latent predictor
-        |
-predicted next-state latent
-
-next particle state G_t+1
-        |
-same GNN encoder
-        |
-target next-state latent
-```
-
-The Particle-JEPA loss is intentionally simple:
+Can a particle graph model learn a useful latent world representation by
+predicting the next graph latent, regularized with SIGReg, without supervising
+decoded acceleration or rollout?
 
 ```text
-prediction loss + SIGReg anti-collapse loss
+current particle graph G_t
+  -> shared graph encoder
+  -> context node/region/graph latents
+  -> latent predictor
+  -> predicted future latents
+
+future particle graph G_t+1
+  -> same graph encoder
+  -> target future latents
 ```
 
-SIGReg is used as the clean anti-collapse regularizer. There is no EMA target encoder in the default design.
+The intended JEPA objective was:
 
-## Model Comparisons
+```text
+latent prediction + SIGReg anti-collapse
+```
 
-The intended comparison set is:
+No EMA target encoder was intended. SIGReg was intentional.
 
-1. **Particle-JEPA**: graph-native JEPA adapted to particle dynamics, with SIGReg.
-2. **GNS baseline**: Graph Network Simulator-style learned physical simulator.
+## Final Result
 
-## Graph Representation
+The prototype did not validate the JEPA approach for simulator-grade particle
+rollout.
 
-- Nodes are particles.
-- Edges are nearby interactions from a dynamic radius graph.
-- Node features include position, velocity, particle type, material type, and boundary flags.
-- Edge features include relative position, relative velocity, distance, and normalized distance.
+Final diagnostic probes on WaterRamps:
 
-## Current Capabilities
+```text
+raw_features probe:
+  learned gravity, but not ramp contact
+  rollout position error: 0.012546
 
-- Toy 2D particle rollout generator.
-- Dynamic particle graph construction with PyTorch Geometric.
-- Particle-JEPA with node-level, region-level, and graph-level latent next-state prediction.
-- SIGReg anti-collapse regularization.
-- GNS-style baseline.
-- Hydra configuration.
-- Weights & Biases tracking support.
-- FP16 autocast on CUDA.
-- `torch.compile(..., mode="reduce-overhead")` support.
-- Rollout strip visualization.
-- DeepMind Learning-to-Simulate TFRecord loader without a TensorFlow dependency.
-- Latent future retrieval visualization with chance and random baselines.
+node_context probe:
+  physically wrong direction; gravity pulled left instead of down
+  rollout position error: 0.217165
 
-## Installation
+node_prediction probe:
+  predicted latents were incoherent; particle block degraded before contact
+  rollout position error: 0.038809
+```
+
+Because the supervised GNS baseline worked decently on the same data and rollout
+pipeline, the failure is attributed to the JEPA representation/prediction
+objective rather than to dataset loading, graph construction, acceleration
+normalization, or rollout integration.
+
+## Interpretation
+
+The core issue is identifiability. A non-collapsed latent that predicts another
+latent is not necessarily a latent that preserves the physical variables needed
+for rollout: velocity, contact geometry, boundary relation, particle type
+effects, and force-relevant local neighborhoods.
+
+For particle simulation, small acceleration errors compound immediately. The
+current JEPA objective can satisfy latent agreement while discarding information
+that a simulator needs.
+
+## What Remains Useful
+
+- Learning-to-Simulate TFRecord loading without TensorFlow.
+- Dynamic PyG graph construction for particle trajectories.
+- A supervised GNS-style baseline.
+- Rollout visualization and evaluation scripts.
+- Frozen-latent probe tooling for representation diagnostics.
+- Training utilities for mixed precision, checkpointing, and resume.
+
+## Setup
 
 Python 3.11+ is recommended.
 
@@ -79,11 +97,12 @@ pip install -e .
 pre-commit install
 ```
 
-PyTorch Geometric installation can vary by CUDA and PyTorch version. If the default install fails, follow the official PyG installation selector:
+PyTorch Geometric installation can vary by CUDA and PyTorch version. If needed,
+use the official selector:
 
-[https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html)
+<https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html>
 
-## Quick Start
+## Reproduce
 
 Run tests:
 
@@ -91,111 +110,47 @@ Run tests:
 pytest
 ```
 
+Download an LTS dataset:
+
+```bash
+python scripts/download_data.py --dataset WaterRamps --splits metadata train valid
+```
+
 Train Particle-JEPA:
 
 ```bash
-python scripts/train.py
-```
-
-Train the GNS-style baseline:
-
-```bash
-python scripts/train.py --config-name gns
-```
-
-Use Hydra overrides:
-
-```bash
-python scripts/train.py data.num_particles=128 data.horizon=1 training.epochs=20
-```
-
-Enable Weights & Biases:
-
-```bash
-wandb login
-python scripts/train.py tracking.enabled=true
-```
-
-Export a rollout strip from a GNS checkpoint:
-
-```bash
-python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 32
-```
-
-Export a Particle-JEPA retrieval panel:
-
-```bash
-python scripts/retrieve.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --top-k 5
-```
-
-Download a DeepMind Learning-to-Simulate sample:
-
-```bash
-python scripts/download_data.py --dataset WaterDropSample --splits metadata train valid
-```
-
-Train on the official LTS sample:
-
-```bash
 python scripts/train.py --config-name lts_particle_jepa
+```
+
+Resume Particle-JEPA:
+
+```bash
+python scripts/train.py --config-name lts_particle_jepa training.resume_from=runs/<run>_jepa/checkpoints/last.pt
+```
+
+Train diagnostic probes:
+
+```bash
+python scripts/train_probe.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --batch-size 5 --epochs 10 --rollout-steps 48 --latent-source raw_features
+python scripts/train_probe.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --batch-size 5 --epochs 10 --rollout-steps 48 --latent-source node_context
+python scripts/train_probe.py --checkpoint runs/<run>_jepa/checkpoints/last.pt --batch-size 5 --epochs 10 --rollout-steps 48 --latent-source node_prediction
+```
+
+Train the supervised GNS baseline:
+
+```bash
 python scripts/train.py --config-name lts_gns
 ```
 
-Export a real LTS rollout GIF from a GNS checkpoint:
+Render a GNS rollout:
 
 ```bash
-python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 64 --output runs/<run>_gns/visualizations/lts_rollout.gif
+python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 64
 ```
-
-Training writes run artifacts to:
-
-```text
-runs/
-└── YYYYMMDD_HHMMSS_model_name/
-    ├── config.yaml
-    ├── checkpoints/
-    ├── logs.jsonl
-    ├── metrics.json
-    └── visualizations/
-```
-
-## Evaluation
-
-Particle-JEPA is evaluated with:
-
-- latent next-state retrieval top-k accuracy,
-- chance retrieval baseline,
-- random latent retrieval baseline,
-- prediction-target cosine,
-- latent standard deviation diagnostics,
-- latent trajectory visualizations.
-
-GNS is evaluated with:
-
-- one-step prediction error,
-- rollout position error,
-- rollout visual comparison,
-- rollout Chamfer distance.
-
-## Learning-to-Simulate
-
-The project supports the official DeepMind Learning-to-Simulate release. Start with `WaterDropSample`, then scale to visually richer 2D datasets such as `WaterRamps`, `SandRamps`, `Goop`, and `MultiMaterial`. The 3D datasets are supported at the loader level but need dedicated 3D visualization work.
-
-Current LTS support:
-
-- TFRecord parsing through protobuf.
-- Official metadata radius and bounds.
-- Finite-difference velocities from particle positions.
-- GNS rollout from real decoded trajectories.
-
-See [docs/learning_to_simulate.md](docs/learning_to_simulate.md).
 
 ## References
 
-- Sanchez-Gonzalez et al., *Learning to Simulate Complex Physics with Graph Networks*, ICML 2020.
-- LeCun, *A Path Towards Autonomous Machine Intelligence*, 2022.
-- Assran et al., *Self-Supervised Learning from Images with a Joint-Embedding Predictive Architecture*, CVPR 2023.
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+- Sanchez-Gonzalez et al., *Learning to Simulate Complex Physics with Graph
+  Networks*, ICML 2020.
+- Assran et al., *Self-Supervised Learning from Images with a Joint-Embedding
+  Predictive Architecture*, CVPR 2023.

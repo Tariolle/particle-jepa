@@ -1,34 +1,45 @@
-# Experiment Notes
+# Final Results
 
-## Current Focus
+Particle-JEPA was tested as a self-supervised graph world model for particle
+simulation. The prototype is closed with a negative result.
 
-Particle-JEPA is now the primary research object. The project goal is to test
-whether a JEPA-style graph latent dynamics model can learn useful particle
-world representations.
+## Main Conclusion
 
-The GNS model remains as the supervised learned-simulation baseline. It is not
-the project center.
+The JEPA/SIGReg objective did not learn particle latents that were sufficient for
+rollout. A supervised GNS baseline worked decently on the same WaterRamps data,
+so the failure is specific to the learned JEPA representation and predictor, not
+to the basic data or rollout pipeline.
 
-## What Counts As Evidence
+## Decisive Diagnostic
 
-Retrieval alone is not enough. A nearest-neighbor panel can look bad even when
-scalar retrieval metrics beat chance, and it can look plausible for shallow
-reasons.
+After training Particle-JEPA, the model was frozen and lightweight acceleration
+probes were trained from three sources:
 
-The stronger evaluation path is:
+```text
+raw_features:
+  learned gravity, but not ramp contact
+  rollout position error: 0.012546
 
-1. Train Particle-JEPA with latent prediction plus SIGReg only.
-2. Freeze the JEPA encoder and predictor.
-3. Train a lightweight probe from predicted future node latents to particle
-   acceleration or next state.
-4. Evaluate one-step probe error, rollout videos, and contact behavior.
+node_context:
+  gravity direction was physically wrong
+  rollout position error: 0.217165
 
-No decoded-state loss belongs in JEPA training. The probe is only an evaluation
-instrument.
+node_prediction:
+  particle block lost coherence before contact
+  rollout position error: 0.038809
+```
 
-## Baseline Reference
+Interpretation:
 
-The corrected WaterRamps GNS baseline uses official-style inputs:
+- `raw_features` shows the simple MLP probe can learn easy local effects such as
+  gravity, but lacks relational capacity for contact.
+- `node_context` shows the JEPA encoder latent is not a clean dynamics state.
+- `node_prediction` shows the predictor makes the latent state even less
+  physically coherent.
+
+## Baseline
+
+The corrected WaterRamps GNS baseline used official-style inputs:
 
 - six-frame position history,
 - normalized velocity history,
@@ -38,11 +49,25 @@ The corrected WaterRamps GNS baseline uses official-style inputs:
 - dynamic-particle noise,
 - kinematic-particle handling.
 
-Recent GNS WaterRamps contact rollout:
+Observed reference run:
 
 ```text
 train loss: 0.5530 -> 0.1161
 contact rollout error: 0.0410
 ```
 
-This is the reference bar for later probe-based Particle-JEPA evaluation.
+This baseline was not perfect, but it learned plausible contact behavior. That
+is enough to rule out the broadest pipeline failures.
+
+## Research Decision
+
+Do not continue patching this exact Particle-JEPA objective with more auxiliary
+losses. Adding acceleration or rollout supervision would mostly turn the method
+into a supervised simulator with extra representation machinery.
+
+Future work would need a different formulation, for example:
+
+- JEPA only as pretraining for a supervised simulator,
+- transition-sufficient SSL targets designed around relative motion/contact,
+- stronger physics-biased or equivariant graph architectures,
+- or simply supervised GNS-style training when rollout accuracy is the goal.
