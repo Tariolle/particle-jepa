@@ -49,6 +49,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--mlp-layers", type=int, default=2)
+    parser.add_argument(
+        "--latent-source",
+        choices=["node_prediction", "node_context", "node_target", "raw_features"],
+        default="node_prediction",
+    )
     parser.add_argument("--rollout-steps", type=int, default=48)
     parser.add_argument("--rollout-start", type=int, default=0)
     parser.add_argument("--device", default="auto")
@@ -62,6 +67,7 @@ def main() -> None:
     config["train"]["precision"] = "fp16"
     config["train"]["compile"] = args.compile
     config["train"]["compile_mode"] = "reduce-overhead"
+    _force_one_step_probe_data(config)
     if args.batch_size is not None:
         config["train"]["batch_size"] = args.batch_size
         config["data"]["batch_size"] = args.batch_size
@@ -75,6 +81,7 @@ def main() -> None:
         "weight_decay": args.weight_decay,
         "hidden_dim": args.hidden_dim,
         "mlp_layers": args.mlp_layers,
+        "latent_source": args.latent_source,
         "rollout_steps": args.rollout_steps,
         "rollout_start": args.rollout_start,
         "base_config": config,
@@ -89,12 +96,13 @@ def main() -> None:
     predict_latents = _compile_predict(jepa.predict, config)
 
     decoder = AccelerationDecoder(
-        config["model"]["latent_dim"],
+        _probe_input_dim(config, args.latent_source),
         hidden_dim=args.hidden_dim,
         spatial_dim=_spatial_dim(config),
         mlp_layers=args.mlp_layers,
     ).to(device)
-    decoder = compile_model(decoder, config)
+    decoder_config = _decoder_compile_config(config)
+    decoder = compile_model(decoder, decoder_config)
 
     dataset = build_dataset(config["data"])
     loader = make_pyg_dataloader(dataset, config, device, shuffle=True)
@@ -106,13 +114,21 @@ def main() -> None:
         running = 0.0
         skipped = 0
         seen = 0
-        for context, _future in tqdm(loader, desc=f"probe epoch {epoch + 1}", leave=False):
+        for context, future in tqdm(loader, desc=f"probe epoch {epoch + 1}", leave=False):
             seen += 1
             try:
                 context = move_to_device(context, device)
+                future = move_to_device(future, device)
                 optimizer.zero_grad(set_to_none=True)
                 with torch.no_grad(), autocast_context(device, config):
-                    latents = predict_latents(context)["node_prediction"]
+                    latents = _probe_latents(
+                        jepa,
+                        predict_latents,
+                        context,
+                        future,
+                        args.latent_source,
+                        device,
+                    )
                 with autocast_context(device, config):
                     acceleration = decoder(latents.detach())
                     loss = acceleration_loss(
@@ -143,7 +159,12 @@ def main() -> None:
             running += loss.item()
 
         used = max(seen - skipped, 1)
-        row = {"epoch": epoch + 1, "train_loss": running / used, "skipped_batches": skipped}
+        row = {
+            "epoch": epoch + 1,
+            "latent_source": args.latent_source,
+            "train_loss": running / used,
+            "skipped_batches": skipped,
+        }
         append_jsonl(run_dir / "logs.jsonl", row)
         print(f"epoch={epoch + 1} probe_loss={row['train_loss']:.6f} skipped={skipped}")
 
@@ -162,6 +183,8 @@ def main() -> None:
         decoder,
         config,
         device,
+        latent_source=args.latent_source,
+        predict_latents=predict_latents,
         steps=args.rollout_steps,
         start=args.rollout_start,
     )
@@ -189,7 +212,16 @@ def main() -> None:
     print(f"run directory: {run_dir}")
 
 
-def rollout_probe(jepa, decoder, config: dict, device: torch.device, steps: int, start: int):
+def rollout_probe(
+    jepa,
+    decoder,
+    config: dict,
+    device: torch.device,
+    latent_source: str,
+    predict_latents,
+    steps: int,
+    start: int,
+):
     data_cfg = config["data"]
     if data_cfg.get("dataset") not in {"learning_to_simulate", "lts"}:
         msg = "The probe rollout currently targets Learning-to-Simulate datasets."
@@ -226,14 +258,20 @@ def rollout_probe(jepa, decoder, config: dict, device: torch.device, steps: int,
 
     jepa.eval()
     decoder.eval()
-    predict_latents = _compile_predict(jepa.predict, config)
     with torch.no_grad():
         for _ in range(steps):
             graph = dataset.build_graph_from_position_sequence(
                 current_sequence.detach().cpu(), trajectory["particle_types"]
             ).to(device)
             with autocast_context(device, config):
-                latents = predict_latents(graph)["node_prediction"]
+                latents = _probe_latents(
+                    jepa,
+                    predict_latents,
+                    graph,
+                    graph,
+                    latent_source,
+                    device,
+                )
                 acceleration = decoder(latents).float()
             acceleration = _denormalize_lts_acceleration(acceleration, dataset, data_cfg)
             velocities = current_sequence[-1] - current_sequence[-2]
@@ -295,6 +333,48 @@ def _compile_predict(predict_fn, config: dict):
     except Exception as exc:
         print(f"torch.compile unavailable for JEPA predict path, continuing eager: {exc}")
         return predict_fn
+
+
+def _probe_latents(
+    jepa,
+    predict_latents,
+    context,
+    future,
+    latent_source: str,
+    device: torch.device,
+) -> torch.Tensor:
+    if latent_source == "raw_features":
+        return context.x
+    horizon = torch.ones(
+        int(getattr(context, "num_graphs", 1)),
+        dtype=torch.long,
+        device=device,
+    )
+    if latent_source == "node_target":
+        return jepa(context, future, horizon=horizon)["node_target"]
+    outputs = predict_latents(context, horizon=horizon)
+    return outputs[latent_source]
+
+
+def _probe_input_dim(config: dict, latent_source: str) -> int:
+    if latent_source != "raw_features":
+        return int(config["model"]["latent_dim"])
+    return int(config["model"]["node_dim"])
+
+
+def _force_one_step_probe_data(config: dict) -> None:
+    data_cfg = config.setdefault("data", {})
+    data_cfg["horizon"] = 1
+    data_cfg["future_offset"] = 1
+    data_cfg.pop("horizons", None)
+    data_cfg.pop("future_offsets", None)
+
+
+def _decoder_compile_config(config: dict) -> dict:
+    decoder_config = dict(config)
+    decoder_config["train"] = dict(config.get("train", {}))
+    decoder_config["train"]["compile_scope"] = "full"
+    return decoder_config
 
 
 def _denormalize_lts_acceleration(acceleration, dataset, data_cfg: dict):

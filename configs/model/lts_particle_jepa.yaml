@@ -21,7 +21,7 @@ data:
   noise_std: 0.00067
   apply_noise: true
   use_official_features: true
-  batch_size: 6
+  batch_size: 5
   num_workers: 6
   pin_memory: true
   persistent_workers: true
@@ -53,6 +53,9 @@ loss:
   prediction_weight: 1.0
   node_prediction_weight: 1.0
   region_prediction_weight: 1.0
+  delta_prediction_weight: 0.25
+  node_delta_prediction_weight: 0.5
+  region_delta_prediction_weight: 0.25
   sigreg_weight: 0.05
   sigreg_sketch_dim: 64
 
@@ -72,18 +75,26 @@ training:
   compile_scope: regional
   compile_required: true
   compile_mode: reduce-overhead
+  regional_compile_mode: default
   compile_fullgraph: false
   compile_dynamic: true
+  regional_compile_dynamic: true
+  regional_compile_cudagraphs: false
   cudagraph_skip_dynamic_graphs: true
   cudagraph_dynamic_shape_warn_limit: null
+  max_autotune_gemm_backends: ATEN
   allow_tf32: true
   float32_matmul_precision: high
   preflight_warmup_batches: 4
   preflight_batches: 64
   preflight_min_batches_per_second: 1.0
   preflight_max_epoch_seconds: 600
-  max_batch_seconds: 10
-  max_epoch_seconds: 1200
+  preflight_max_peak_memory_mb: 7500
+  preflight_max_batch_seconds: 30
+  slow_batch_seconds: 10
+  max_epoch_seconds: 2400
+  max_oom_fraction: 0.02
+  resume_from: null
 
 tracking:
   provider: wandb

@@ -62,11 +62,18 @@ training:
   compile_scope: regional
   compile_required: true
   compile_mode: reduce-overhead
+  regional_compile_mode: default
   compile_fullgraph: false
   compile_dynamic: true
+  regional_compile_dynamic: true
+  regional_compile_cudagraphs: false
+  max_autotune_gemm_backends: ATEN
   preflight_warmup_batches: 1
   preflight_batches: 4
   preflight_max_epoch_seconds: 120
+  preflight_max_peak_memory_mb: 6500
+  slow_batch_seconds: 10
+  max_oom_fraction: 0.02
 
 tracking:
   provider: wandb

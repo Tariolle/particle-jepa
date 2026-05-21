@@ -32,6 +32,10 @@ def configure_inductor(config: dict[str, Any]) -> None:
         )
         warn_limit = train_cfg.get("cudagraph_dynamic_shape_warn_limit", None)
         triton_config.cudagraph_dynamic_shape_warn_limit = warn_limit
+        if train_cfg.get("max_autotune_gemm_backends") is not None:
+            inductor_config.max_autotune_gemm_backends = train_cfg[
+                "max_autotune_gemm_backends"
+            ]
     except Exception as exc:
         print(f"could not apply torch._inductor dynamic graph settings: {exc}")
 
@@ -49,7 +53,10 @@ def compile_model(model: nn.Module, config: dict[str, Any]) -> nn.Module:
         if compile_regions is None:
             msg = f"{model.__class__.__name__} does not support regional compilation."
             raise RuntimeError(msg)
-        count = compile_regions(**kwargs)
+        _set_regional_cudagraphs(train_cfg)
+        kwargs = _regional_compile_kwargs(train_cfg)
+        input_dtype = _regional_input_dtype(train_cfg)
+        count = compile_regions(input_dtype=input_dtype, **kwargs)
         print(f"torch.compile regional scope: compiled {count} dense regions")
         return model
     if scope != "full":
@@ -73,6 +80,36 @@ def _compile_kwargs(train_cfg: dict[str, Any]) -> dict[str, Any]:
     if train_cfg.get("compile_dynamic") is not None:
         kwargs["dynamic"] = bool(train_cfg["compile_dynamic"])
     return kwargs
+
+
+def _regional_compile_kwargs(train_cfg: dict[str, Any]) -> dict[str, Any]:
+    kwargs = _compile_kwargs(train_cfg)
+    if train_cfg.get("regional_compile_mode") is not None:
+        kwargs["mode"] = train_cfg["regional_compile_mode"]
+    regional_dynamic = train_cfg.get("regional_compile_dynamic", True)
+    if regional_dynamic is None:
+        kwargs.pop("dynamic", None)
+    else:
+        kwargs["dynamic"] = bool(regional_dynamic)
+    return kwargs
+
+
+def _set_regional_cudagraphs(train_cfg: dict[str, Any]) -> None:
+    if "regional_compile_cudagraphs" not in train_cfg:
+        return
+    try:
+        torch._inductor.config.triton.cudagraphs = bool(
+            train_cfg["regional_compile_cudagraphs"]
+        )
+    except Exception as exc:
+        print(f"could not set regional torch.compile cudagraphs: {exc}")
+
+
+def _regional_input_dtype(train_cfg: dict[str, Any]) -> torch.dtype | None:
+    precision = train_cfg.get("precision", "fp16")
+    if precision == "fp16" and torch.cuda.is_available():
+        return torch.float16
+    return None
 
 
 def unwrap_compiled_model(model: nn.Module) -> nn.Module:
@@ -133,9 +170,13 @@ def move_to_device(batch, device: torch.device):
 
 def strip_compiled_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     prefix = "_orig_mod."
-    if not any(key.startswith(prefix) for key in state_dict):
+    regional_segment = ".module._orig_mod."
+    if not any(key.startswith(prefix) or regional_segment in key for key in state_dict):
         return state_dict
-    return {key.removeprefix(prefix): value for key, value in state_dict.items()}
+    return {
+        key.removeprefix(prefix).replace(regional_segment, "."): value
+        for key, value in state_dict.items()
+    }
 
 
 class BucketBatchSampler:

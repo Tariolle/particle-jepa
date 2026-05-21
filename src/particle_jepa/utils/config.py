@@ -67,19 +67,34 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                 "compile_scope": training.get("compile_scope", "full"),
                 "compile_required": training.get("compile_required", True),
                 "compile_mode": training.get("compile_mode", "reduce-overhead"),
+                "regional_compile_mode": training.get("regional_compile_mode", "default"),
                 "compile_fullgraph": training.get("compile_fullgraph", False),
                 "compile_dynamic": training.get("compile_dynamic"),
+                "regional_compile_dynamic": training.get("regional_compile_dynamic", True),
+                "regional_compile_cudagraphs": training.get(
+                    "regional_compile_cudagraphs", False
+                ),
                 "cudagraph_skip_dynamic_graphs": training.get(
                     "cudagraph_skip_dynamic_graphs", True
                 ),
                 "cudagraph_dynamic_shape_warn_limit": training.get(
                     "cudagraph_dynamic_shape_warn_limit"
                 ),
+                "max_autotune_gemm_backends": training.get(
+                    "max_autotune_gemm_backends"
+                ),
                 "dynamics_loss_weight": loss.get("dynamics_loss_weight", 1.0),
                 "jepa_loss_weight": loss.get("jepa_loss_weight", 0.2),
                 "prediction_weight": loss.get("prediction_weight", 1.0),
                 "node_prediction_weight": loss.get("node_prediction_weight", 1.0),
                 "region_prediction_weight": loss.get("region_prediction_weight", 1.0),
+                "delta_prediction_weight": loss.get("delta_prediction_weight", 0.25),
+                "node_delta_prediction_weight": loss.get(
+                    "node_delta_prediction_weight", 0.5
+                ),
+                "region_delta_prediction_weight": loss.get(
+                    "region_delta_prediction_weight", 0.25
+                ),
                 "sigreg_weight": loss.get("sigreg_weight", 0.05),
                 "sigreg_sketch_dim": loss.get("sigreg_sketch_dim", 64),
                 "preflight_warmup_batches": training.get("preflight_warmup_batches", 0),
@@ -88,8 +103,16 @@ def normalize_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
                     "preflight_min_batches_per_second"
                 ),
                 "preflight_max_epoch_seconds": training.get("preflight_max_epoch_seconds"),
-                "max_batch_seconds": training.get("max_batch_seconds"),
+                "preflight_max_peak_memory_mb": training.get(
+                    "preflight_max_peak_memory_mb"
+                ),
+                "preflight_max_batch_seconds": training.get(
+                    "preflight_max_batch_seconds"
+                ),
+                "slow_batch_seconds": training.get("slow_batch_seconds"),
                 "max_epoch_seconds": training.get("max_epoch_seconds"),
+                "max_oom_fraction": training.get("max_oom_fraction"),
+                "resume_from": training.get("resume_from"),
             },
             "paths": config.get("paths", {"run_root": "runs"}),
             "tracking": config.get("tracking", {"provider": "wandb", "enabled": False}),

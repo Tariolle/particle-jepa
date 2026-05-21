@@ -16,6 +16,16 @@ def test_acceleration_loss_is_zero_for_equal_tensors() -> None:
     assert acceleration_loss(target, target).item() == 0.0
 
 
+def test_acceleration_loss_mask_matches_selected_unmasked_mean() -> None:
+    predicted = torch.tensor([[1.0, 2.0], [10.0, 10.0], [4.0, 6.0]])
+    target = torch.tensor([[0.0, 0.0], [0.0, 0.0], [2.0, 2.0]])
+    mask = torch.tensor([1.0, 0.0, 1.0])
+
+    expected = (predicted[[0, 2]] - target[[0, 2]]).pow(2).mean()
+
+    assert torch.allclose(acceleration_loss(predicted, target, mask), expected)
+
+
 def test_jepa_loss_is_finite() -> None:
     prediction = torch.randn(3, 8)
     target = torch.randn(3, 8)
@@ -63,6 +73,7 @@ def test_temporal_jepa_loss_is_finite_for_tiny_fp16_latents() -> None:
         "context": tiny.clone(),
         "node_prediction": node_tiny,
         "node_target": node_tiny.clone(),
+        "node_context": node_tiny.clone(),
         "region_prediction": region_tiny,
         "region_target": region_tiny.clone(),
         "node_mask": torch.ones(16),
@@ -71,3 +82,50 @@ def test_temporal_jepa_loss_is_finite_for_tiny_fp16_latents() -> None:
     losses = temporal_graph_jepa_loss(outputs, {"train": {"sigreg_sketch_dim": 4}})
 
     assert torch.isfinite(losses["loss"])
+
+
+def test_temporal_jepa_loss_includes_weighted_delta_terms() -> None:
+    outputs = {
+        "prediction": torch.tensor([[1.0, 1.0]]),
+        "target": torch.tensor([[3.0, 0.0]]),
+        "context": torch.tensor([[1.0, 0.0]]),
+        "node_prediction": torch.tensor([[1.0, 1.0], [1.0, 2.0]]),
+        "node_target": torch.tensor([[3.0, 0.0], [5.0, 0.0]]),
+        "node_context": torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
+        "region_prediction": torch.tensor([[[1.0, 1.0]]]),
+        "region_context": torch.tensor([[[1.0, 0.0]]]),
+        "region_target": torch.tensor([[[3.0, 0.0]]]),
+        "node_mask": torch.ones(2),
+    }
+
+    no_delta = temporal_graph_jepa_loss(
+        outputs,
+        {
+            "train": {
+                "prediction_weight": 0.0,
+                "node_prediction_weight": 0.0,
+                "region_prediction_weight": 0.0,
+                "sigreg_weight": 0.0,
+            }
+        },
+    )["loss"]
+    with_delta = temporal_graph_jepa_loss(
+        outputs,
+        {
+            "train": {
+                "prediction_weight": 0.0,
+                "node_prediction_weight": 0.0,
+                "region_prediction_weight": 0.0,
+                "delta_prediction_weight": 1.0,
+                "node_delta_prediction_weight": 1.0,
+                "region_delta_prediction_weight": 1.0,
+                "sigreg_weight": 0.0,
+            }
+        },
+    )
+
+    assert no_delta.item() == 0.0
+    assert with_delta["loss"] > 0.0
+    assert with_delta["prediction_delta_loss"] > 0.0
+    assert with_delta["masked_node_delta_prediction_loss"] > 0.0
+    assert with_delta["region_delta_prediction_loss"] > 0.0

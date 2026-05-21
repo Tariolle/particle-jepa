@@ -124,6 +124,21 @@ class ToyParticleDataset(Dataset):
         return self.config.num_particles
 
     def __getitem__(self, index: int):
+        context, future_offset, future_idx, traj_idx, _time_idx = self._context_sample(index)
+
+        future = self.graph_builder.build(
+            self.positions[traj_idx, future_idx],
+            self.velocities[traj_idx, future_idx],
+            particle_type=self.particle_types[traj_idx],
+        )
+        future.horizon = torch.tensor([future_offset], dtype=torch.long)
+        return context, future
+
+    def context_at(self, index: int):
+        """Return only the supervised context graph for acceleration training."""
+        return self._context_sample(index)[0]
+
+    def _context_sample(self, index: int):
         traj_idx = index // self.samples_per_trajectory
         time_idx = index % self.samples_per_trajectory
         future_offset = self.future_offsets[time_idx % len(self.future_offsets)]
@@ -132,11 +147,6 @@ class ToyParticleDataset(Dataset):
         context = self.graph_builder.build(
             self.positions[traj_idx, time_idx],
             self.velocities[traj_idx, time_idx],
-            particle_type=self.particle_types[traj_idx],
-        )
-        future = self.graph_builder.build(
-            self.positions[traj_idx, future_idx],
-            self.velocities[traj_idx, future_idx],
             particle_type=self.particle_types[traj_idx],
         )
 
@@ -148,8 +158,7 @@ class ToyParticleDataset(Dataset):
         context.y_velocity = next_velocity
         context.y_acceleration = acceleration
         context.horizon = torch.tensor([future_offset], dtype=torch.long)
-        future.horizon = torch.tensor([future_offset], dtype=torch.long)
-        return context, future
+        return context, future_offset, future_idx, traj_idx, time_idx
 
     def _future_offsets(self) -> tuple[int, ...]:
         offsets = self.config.future_offsets

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+from torch.utils.data import Dataset, Subset
 from tqdm import tqdm
 
 from particle_jepa.models import GraphNetworkSimulator
@@ -29,9 +30,9 @@ def train_gns(
         mlp_layers=model_cfg.get("mlp_layers", 2),
     ).to(device)
     model = compile_model(model, config)
-    loader = make_pyg_dataloader(dataset, config, device, shuffle=True)
+    loader = make_pyg_dataloader(_ContextOnlyDataset(dataset), config, device, shuffle=True)
     val_loader = (
-        make_pyg_dataloader(val_dataset, config, device, shuffle=False)
+        make_pyg_dataloader(_ContextOnlyDataset(val_dataset), config, device, shuffle=False)
         if val_dataset is not None
         else None
     )
@@ -45,7 +46,7 @@ def train_gns(
     for epoch in range(train_cfg["epochs"]):
         model.train()
         running = 0.0
-        for context, _future in tqdm(loader, desc=f"gns epoch {epoch + 1}", leave=False):
+        for context in tqdm(loader, desc=f"gns epoch {epoch + 1}", leave=False):
             context = move_to_device(context, device)
             optimizer.zero_grad(set_to_none=True)
             with autocast_context(device, config):
@@ -60,7 +61,7 @@ def train_gns(
             scaler.update()
             running += loss.item()
         train_loss = running / max(len(loader), 1)
-        val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
+        val_loss = _evaluate(model, val_loader, device, config) if val_loader is not None else None
         row = {"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss}
         if run_dir is not None:
             append_jsonl(run_dir / "logs.jsonl", row)
@@ -70,14 +71,50 @@ def train_gns(
     return model
 
 
-def _evaluate(model: GraphNetworkSimulator, loader, device: torch.device) -> float:
+def _evaluate(
+    model: GraphNetworkSimulator, loader, device: torch.device, config: dict
+) -> float:
     model.eval()
     running = 0.0
     with torch.no_grad():
-        for context, _future in loader:
+        for context in loader:
             context = move_to_device(context, device)
-            with autocast_context(device, {"train": {"precision": "fp16"}}):
+            with autocast_context(device, config):
                 running += acceleration_loss(
                     model(context), context.y_acceleration, getattr(context, "dynamic_mask", None)
                 ).item()
     return running / max(len(loader), 1)
+
+
+class _ContextOnlyDataset(Dataset):
+    """Adapter that lets GNS skip constructing unused future graphs."""
+
+    def __init__(self, dataset) -> None:
+        self.dataset = dataset
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, index: int):
+        return _context_at(self.dataset, int(index))
+
+    def estimate_graph_size(self, index: int) -> int:
+        return _estimate_graph_size(self.dataset, int(index))
+
+
+def _context_at(dataset, index: int):
+    if isinstance(dataset, Subset):
+        return _context_at(dataset.dataset, int(dataset.indices[index]))
+    context_at = getattr(dataset, "context_at", None)
+    if context_at is not None:
+        return context_at(index)
+    return dataset[index][0]
+
+
+def _estimate_graph_size(dataset, index: int) -> int:
+    if isinstance(dataset, Subset):
+        return _estimate_graph_size(dataset.dataset, int(dataset.indices[index]))
+    estimator = getattr(dataset, "estimate_graph_size", None)
+    if estimator is None:
+        return 0
+    return int(estimator(index))

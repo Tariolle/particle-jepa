@@ -101,6 +101,21 @@ class LearningToSimulateDataset(Dataset):
         return int(self.trajectories[traj_idx]["positions"].size(1))
 
     def __getitem__(self, index: int):
+        context, future_offset, future_idx, trajectory, particle_type = self._context_sample(index)
+
+        future = self.build_graph_from_position_sequence(
+            self._position_sequence(trajectory, future_idx), particle_type
+        )
+        future.horizon = torch.tensor([future_offset], dtype=torch.long)
+        if "step_context" in trajectory:
+            future.step_context = trajectory["step_context"][future_idx]
+        return context, future
+
+    def context_at(self, index: int):
+        """Return only the supervised context graph for acceleration training."""
+        return self._context_sample(index)[0]
+
+    def _context_sample(self, index: int):
         traj_idx, time_idx, future_offset = self.indices[index]
         trajectory = self.trajectories[traj_idx]
         future_idx = time_idx + future_offset
@@ -110,9 +125,6 @@ class LearningToSimulateDataset(Dataset):
         position_noise = self._sample_position_noise(position_sequence, particle_type)
         noisy_position_sequence = position_sequence + position_noise
         context = self.build_graph_from_position_sequence(noisy_position_sequence, particle_type)
-        future = self.build_graph_from_position_sequence(
-            self._position_sequence(trajectory, future_idx), particle_type
-        )
 
         next_idx = min(time_idx + 1, trajectory["positions"].size(0) - 1)
         next_position = trajectory["positions"][next_idx]
@@ -131,11 +143,9 @@ class LearningToSimulateDataset(Dataset):
         context.dynamic_mask = dynamic_mask.float()
         context.kinematic_mask = (~dynamic_mask).float()
         context.horizon = torch.tensor([future_offset], dtype=torch.long)
-        future.horizon = torch.tensor([future_offset], dtype=torch.long)
         if "step_context" in trajectory:
             context.step_context = trajectory["step_context"][time_idx]
-            future.step_context = trajectory["step_context"][future_idx]
-        return context, future
+        return context, future_offset, future_idx, trajectory, particle_type
 
     def build_graph_from_position_sequence(self, position_sequence: Tensor, particle_type: Tensor):
         """Build the LTS graph for an input position window."""

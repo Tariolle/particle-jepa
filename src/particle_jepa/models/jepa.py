@@ -93,6 +93,7 @@ class ParticleJEPA(nn.Module):
             "node_target": target_node_latents,
             "node_context": context_node_latents,
             "region_prediction": prediction_outputs["region_prediction"],
+            "region_context": prediction_outputs["region_context"],
             "region_target": region_target,
             "node_mask": getattr(context_graph, "dynamic_mask", None),
         }
@@ -119,28 +120,60 @@ class ParticleJEPA(nn.Module):
             self.region_grid_size,
             batch_size,
         )
+        region_context = spatial_region_pool(
+            context_node_latents,
+            context_graph.pos,
+            context_batch,
+            self.region_grid_size,
+            batch_size,
+        )
         return {
             "prediction": prediction,
             "context": context_latent,
             "node_prediction": node_prediction,
             "node_context": context_node_latents,
             "region_prediction": region_prediction,
+            "region_context": region_context,
         }
 
-    def compile_regions(self, **compile_kwargs) -> int:
+    def compile_regions(self, input_dtype: torch.dtype | None = None, **compile_kwargs) -> int:
         """Compile dense repeated regions while leaving sparse PyG graph glue eager."""
-        return _compile_dense_regions(self, **compile_kwargs)
+        return _compile_dense_regions(self, input_dtype=input_dtype, **compile_kwargs)
 
 
-def _compile_dense_regions(module: nn.Module, **compile_kwargs) -> int:
+def _compile_dense_regions(
+    module: nn.Module, input_dtype: torch.dtype | None = None, **compile_kwargs
+) -> int:
     compiled = 0
     for name, child in list(module.named_children()):
-        if isinstance(child, nn.Sequential):
-            setattr(module, name, torch.compile(child, **compile_kwargs))
+        if isinstance(child, nn.Sequential) and _is_shape_stable_mlp(child):
+            compiled_child = torch.compile(child, **compile_kwargs)
+            setattr(module, name, DtypeStableCompiledRegion(compiled_child, input_dtype))
             compiled += 1
         else:
-            compiled += _compile_dense_regions(child, **compile_kwargs)
+            compiled += _compile_dense_regions(child, input_dtype=input_dtype, **compile_kwargs)
     return compiled
+
+
+def _is_shape_stable_mlp(module: nn.Sequential) -> bool:
+    linears = [child for child in module if isinstance(child, nn.Linear)]
+    if not linears:
+        return False
+    return linears[0].in_features == linears[-1].out_features
+
+
+class DtypeStableCompiledRegion(nn.Module):
+    """Compiled dense region with an explicit floating input dtype contract."""
+
+    def __init__(self, module: nn.Module, input_dtype: torch.dtype | None = None) -> None:
+        super().__init__()
+        self.module = module
+        self.input_dtype = input_dtype
+
+    def forward(self, x: Tensor) -> Tensor:
+        if self.input_dtype is not None and x.is_cuda and torch.is_floating_point(x):
+            x = x.to(self.input_dtype)
+        return self.module(x)
 
 
 def _resolve_horizon(

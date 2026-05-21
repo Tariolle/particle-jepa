@@ -19,7 +19,7 @@ if str(SRC) not in sys.path:
 from particle_jepa.data.dataset import build_dataset
 from particle_jepa.training.train_gns import train_gns
 from particle_jepa.training.train_jepa import train_jepa
-from particle_jepa.utils.checkpointing import save_checkpoint
+from particle_jepa.utils.checkpointing import load_checkpoint, save_checkpoint
 from particle_jepa.utils.config import load_config, normalize_experiment_config
 from particle_jepa.utils.perf import unwrap_compiled_model
 from particle_jepa.utils.runs import copy_config, create_run_dir
@@ -43,7 +43,8 @@ def main() -> None:
 @hydra.main(version_base="1.3", config_path="../configs/model", config_name="particle_jepa")
 def hydra_main(cfg: DictConfig) -> None:
     config = normalize_experiment_config(OmegaConf.to_container(cfg, resolve=True))
-    run_training(config, config_source=None)
+    resume_from = config.get("train", {}).get("resume_from")
+    run_training(config, config_source=None, resume_from=resume_from)
 
 
 def legacy_main() -> None:
@@ -51,12 +52,17 @@ def legacy_main() -> None:
     parser.add_argument("--config", default="configs/default.yaml")
     parser.add_argument("--experiment", choices=["gns", "jepa"], default=None)
     parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--resume-from", default=None)
     args = parser.parse_args()
 
     config = normalize_experiment_config(load_config(args.config))
     experiment = args.experiment or _canonical_experiment(config.get("experiment", "jepa"))
     run_training(
-        config, experiment=experiment, config_source=args.config, checkpoint=args.checkpoint
+        config,
+        experiment=experiment,
+        config_source=args.config,
+        checkpoint=args.checkpoint,
+        resume_from=args.resume_from,
     )
 
 
@@ -65,6 +71,7 @@ def run_training(
     experiment: str | None = None,
     config_source: str | None = None,
     checkpoint: str | None = None,
+    resume_from: str | None = None,
 ) -> None:
     experiment = experiment or _canonical_experiment(config.get("experiment", "jepa"))
     seed_everything(config.get("seed", 7))
@@ -93,6 +100,7 @@ def run_training(
                 tracker=tracker,
             )
         elif experiment == "jepa":
+            resume_state = load_checkpoint(resume_from) if resume_from is not None else None
             model = train_jepa(
                 train_dataset,
                 config,
@@ -100,6 +108,7 @@ def run_training(
                 val_dataset=val_dataset,
                 run_dir=run_dir,
                 tracker=tracker,
+                resume_state=resume_state,
             )
         else:
             msg = f"Unsupported experiment '{experiment}'. Expected 'jepa' or 'gns'."

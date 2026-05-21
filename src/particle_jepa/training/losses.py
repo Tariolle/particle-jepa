@@ -4,6 +4,8 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
+_SIGREG_SKETCH_CACHE: dict[tuple[int, int, str, int | None, torch.dtype], Tensor] = {}
+
 
 def acceleration_loss(predicted: Tensor, target: Tensor, mask: Tensor | None = None) -> Tensor:
     error = (predicted - target).pow(2)
@@ -12,7 +14,7 @@ def acceleration_loss(predicted: Tensor, target: Tensor, mask: Tensor | None = N
     if mask.ndim == 1:
         mask = mask[:, None]
     mask = mask.to(device=error.device, dtype=error.dtype)
-    return (error * mask).sum() / mask.sum().clamp_min(1.0)
+    return (error * mask).sum() / (mask.sum() * error.size(-1)).clamp_min(1.0)
 
 
 def latent_prediction_loss(
@@ -55,15 +57,7 @@ def sigreg_loss(latents: Tensor, sketch_dim: int = 64, eps: float = 1e-4) -> Ten
     if latents.size(0) < 2:
         return latents.new_tensor(0.0)
     if sketch_dim > 0 and sketch_dim < latents.size(-1):
-        generator = torch.Generator(device=latents.device).manual_seed(0)
-        sketch = torch.randn(
-            latents.size(-1),
-            sketch_dim,
-            generator=generator,
-            device=latents.device,
-            dtype=latents.dtype,
-        )
-        sketch = sketch / latents.size(-1) ** 0.5
+        sketch = _sigreg_sketch(latents.size(-1), sketch_dim, latents.device, latents.dtype)
         latents = latents @ sketch
     latents = latents - latents.mean(dim=0, keepdim=True)
     std = latents.std(dim=0, unbiased=False)
@@ -84,6 +78,25 @@ def temporal_graph_jepa_loss(outputs: dict[str, Tensor], config: dict) -> dict[s
     region_prediction = latent_prediction_loss(
         outputs["region_prediction"], outputs["region_target"]
     )
+    prediction_delta = latent_prediction_loss(
+        outputs["prediction"] - outputs["context"],
+        (outputs["target"] - outputs["context"]).detach(),
+    )
+    node_delta_target = outputs["node_target"] - outputs["node_context"]
+    node_delta_prediction = latent_prediction_loss(
+        outputs["node_prediction"] - outputs["node_context"],
+        node_delta_target.detach(),
+    )
+    masked_node_delta_prediction = masked_latent_prediction_loss(
+        outputs["node_prediction"] - outputs["node_context"],
+        node_delta_target.detach(),
+        outputs.get("node_mask"),
+    )
+    region_delta_target = outputs["region_target"] - _region_context(outputs)
+    region_delta_prediction = latent_prediction_loss(
+        outputs["region_prediction"] - _region_context(outputs),
+        region_delta_target.detach(),
+    )
     sketch_dim = config.get("train", {}).get("sigreg_sketch_dim", 64)
     sigreg = (
         sigreg_loss(outputs["context"], sketch_dim=sketch_dim)
@@ -97,6 +110,9 @@ def temporal_graph_jepa_loss(outputs: dict[str, Tensor], config: dict) -> dict[s
         train_cfg.get("prediction_weight", 1.0) * prediction
         + train_cfg.get("node_prediction_weight", 1.0) * masked_node_prediction
         + train_cfg.get("region_prediction_weight", 1.0) * region_prediction
+        + train_cfg.get("delta_prediction_weight", 0.0) * prediction_delta
+        + train_cfg.get("node_delta_prediction_weight", 0.0) * masked_node_delta_prediction
+        + train_cfg.get("region_delta_prediction_weight", 0.0) * region_delta_prediction
         + train_cfg.get("sigreg_weight", 0.05) * sigreg
     )
     return {
@@ -105,6 +121,10 @@ def temporal_graph_jepa_loss(outputs: dict[str, Tensor], config: dict) -> dict[s
         "node_prediction_loss": node_prediction.detach(),
         "masked_node_prediction_loss": masked_node_prediction.detach(),
         "region_prediction_loss": region_prediction.detach(),
+        "prediction_delta_loss": prediction_delta.detach(),
+        "node_delta_prediction_loss": node_delta_prediction.detach(),
+        "masked_node_delta_prediction_loss": masked_node_delta_prediction.detach(),
+        "region_delta_prediction_loss": region_delta_prediction.detach(),
         "sigreg_loss": sigreg.detach(),
     }
 
@@ -114,3 +134,30 @@ def covariance_regularizer(latents: Tensor, eps: float = 1e-4) -> Tensor:
     cov = latents.T @ latents / max(latents.size(0) - 1, 1)
     off_diag = cov - torch.diag(torch.diag(cov))
     return off_diag.pow(2).mean() + eps * torch.diag(cov).add(-1).pow(2).mean()
+
+
+def _region_context(outputs: dict[str, Tensor]) -> Tensor:
+    if "region_context" in outputs:
+        return outputs["region_context"]
+    context = outputs["context"]
+    return context[:, None, :].expand_as(outputs["region_prediction"])
+
+
+def _sigreg_sketch(
+    input_dim: int, sketch_dim: int, device: torch.device, dtype: torch.dtype
+) -> Tensor:
+    key = (input_dim, sketch_dim, device.type, device.index, dtype)
+    sketch = _SIGREG_SKETCH_CACHE.get(key)
+    if sketch is not None:
+        return sketch
+    generator = torch.Generator(device=device).manual_seed(0)
+    sketch = torch.randn(
+        input_dim,
+        sketch_dim,
+        generator=generator,
+        device=device,
+        dtype=dtype,
+    )
+    sketch = sketch / input_dim**0.5
+    _SIGREG_SKETCH_CACHE[key] = sketch
+    return sketch
