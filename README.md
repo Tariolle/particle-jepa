@@ -147,10 +147,3 @@ Render a GNS rollout:
 ```bash
 python scripts/rollout.py --checkpoint runs/<run>_gns/checkpoints/last.pt --steps 64
 ```
-
-## References
-
-- Sanchez-Gonzalez et al., *Learning to Simulate Complex Physics with Graph
-  Networks*, ICML 2020.
-- Assran et al., *Self-Supervised Learning from Images with a Joint-Embedding
-  Predictive Architecture*, CVPR 2023.

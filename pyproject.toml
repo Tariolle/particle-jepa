@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "particle-jepa"
 version = "0.1.0"
-description = "Self-supervised graph world models for particle physics."
+description = "Archived Particle-JEPA research prototype for graph particle dynamics."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
